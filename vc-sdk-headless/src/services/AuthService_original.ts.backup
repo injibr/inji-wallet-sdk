@@ -1,0 +1,313 @@
+import { VCSDKConfig, AuthResult, User } from '../types';
+import { StorageService } from './StorageService';
+// import ReactNativeBiometrics from 'react-native-biometrics';
+import Keychain from 'react-native-keychain';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+export class AuthService {
+  private config: VCSDKConfig;
+  private storageService: StorageService | null = null;
+  // private biometrics: ReactNativeBiometrics;
+  private currentUser: User | null = null;
+  private isAuthenticated = false;
+
+  constructor(config: VCSDKConfig) {
+    this.config = config;
+    this.biometrics = new ReactNativeBiometrics({
+      allowDeviceCredentials: config.biometrics?.fallbackToPasscode || false,
+    });
+  }
+
+  async init(storageService: StorageService): Promise<void> {
+    this.storageService = storageService;
+    
+    try {
+      // Check if user data exists
+      await this.loadUserData();
+      
+      console.log('Auth service initialized successfully');
+    } catch (error) {
+      console.error('Failed to initialize auth service:', error);
+      throw error;
+    }
+  }
+
+  async authenticateUser(): Promise<AuthResult> {
+    try {
+      if (!this.config.biometrics?.enabled) {
+        // If biometrics disabled, consider user authenticated
+        return await this.handleSuccessfulAuth();
+      }
+
+      const biometryType = await this.getBiometryType();
+      if (!biometryType) {
+        throw new Error('Biometric authentication not available');
+      }
+
+      const result = await this.biometrics.simplePrompt({
+        promptMessage: this.config.biometrics?.title || 'Authenticate to access your credentials',
+        cancelButtonText: 'Cancel',
+      });
+
+      if (result.success) {
+        return await this.handleSuccessfulAuth();
+      } else {
+        return {
+          success: false,
+          error: 'Biometric authentication failed',
+        };
+      }
+    } catch (error) {
+      console.error('Authentication failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  private async handleSuccessfulAuth(): Promise<AuthResult> {
+    this.isAuthenticated = true;
+    
+    if (!this.currentUser) {
+      this.currentUser = await this.createOrUpdateUser();
+    }
+    
+    this.currentUser.lastLogin = new Date().toISOString();
+    await this.saveUserData(this.currentUser);
+
+    return {
+      success: true,
+      user: this.currentUser,
+    };
+  }
+
+  async isUserAuthenticated(): Promise<boolean> {
+    return this.isAuthenticated;
+  }
+
+  async setupBiometrics(): Promise<boolean> {
+    try {
+      const { available, biometryType } = await this.biometrics.isSensorAvailable();
+      
+      if (!available) {
+        console.log('Biometric authentication not available');
+        return false;
+      }
+
+      // Check if biometric keys already exist
+      const { keysExist } = await this.biometrics.biometricKeysExist();
+      
+      if (!keysExist) {
+        // Create biometric keys
+        const result = await this.biometrics.createKeys();
+        if (!result.publicKey) {
+          throw new Error('Failed to create biometric keys');
+        }
+      }
+
+      console.log(`Biometric authentication setup completed: ${biometryType}`);
+      return true;
+    } catch (error) {
+      console.error('Failed to setup biometrics:', error);
+      return false;
+    }
+  }
+
+  private async getBiometryType(): Promise<string | null> {
+    try {
+      const { available, biometryType } = await this.biometrics.isSensorAvailable();
+      return available ? biometryType : null;
+    } catch (error) {
+      console.error('Failed to get biometry type:', error);
+      return null;
+    }
+  }
+
+  async getCurrentUser(): Promise<User | null> {
+    return this.currentUser;
+  }
+
+  private async createOrUpdateUser(): Promise<User> {
+    const existingUser = await this.loadUserData();
+    
+    if (existingUser) {
+      return existingUser;
+    }
+
+    // Create new user
+    const newUser: User = {
+      id: `user-${Date.now()}`,
+      name: undefined,
+      email: undefined,
+      biometricsEnabled: this.config.biometrics?.enabled || false,
+      lastLogin: new Date().toISOString(),
+    };
+
+    await this.saveUserData(newUser);
+    return newUser;
+  }
+
+  private async loadUserData(): Promise<User | null> {
+    try {
+      const userData = await AsyncStorage.getItem(`vc-sdk-user-${this.config.appId}`);
+      if (userData) {
+        this.currentUser = JSON.parse(userData);
+        return this.currentUser;
+      }
+    } catch (error) {
+      console.error('Failed to load user data:', error);
+    }
+    return null;
+  }
+
+  private async saveUserData(user: User): Promise<void> {
+    try {
+      await AsyncStorage.setItem(
+        `vc-sdk-user-${this.config.appId}`,
+        JSON.stringify(user)
+      );
+      this.currentUser = user;
+    } catch (error) {
+      console.error('Failed to save user data:', error);
+      throw error;
+    }
+  }
+
+  async logout(): Promise<void> {
+    try {
+      this.isAuthenticated = false;
+      this.currentUser = null;
+      
+      // Clear sensitive data but keep user profile
+      console.log('User logged out successfully');
+    } catch (error) {
+      console.error('Failed to logout:', error);
+      throw error;
+    }
+  }
+
+  async deleteUser(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem(`vc-sdk-user-${this.config.appId}`);
+      
+      // Delete biometric keys if they exist
+      try {
+        const { keysExist } = await this.biometrics.biometricKeysExist();
+        if (keysExist) {
+          await this.biometrics.deleteKeys();
+        }
+      } catch (error) {
+        console.warn('Failed to delete biometric keys:', error);
+      }
+
+      this.currentUser = null;
+      this.isAuthenticated = false;
+      
+      console.log('User data deleted successfully');
+    } catch (error) {
+      console.error('Failed to delete user:', error);
+      throw error;
+    }
+  }
+
+  async updateUser(updates: Partial<User>): Promise<User> {
+    if (!this.currentUser) {
+      throw new Error('No user logged in');
+    }
+
+    const updatedUser = { ...this.currentUser, ...updates };
+    await this.saveUserData(updatedUser);
+    
+    return updatedUser;
+  }
+
+  async enableBiometrics(): Promise<boolean> {
+    try {
+      const success = await this.setupBiometrics();
+      
+      if (success && this.currentUser) {
+        await this.updateUser({ biometricsEnabled: true });
+      }
+      
+      return success;
+    } catch (error) {
+      console.error('Failed to enable biometrics:', error);
+      return false;
+    }
+  }
+
+  async disableBiometrics(): Promise<boolean> {
+    try {
+      // Delete biometric keys
+      const { keysExist } = await this.biometrics.biometricKeysExist();
+      if (keysExist) {
+        await this.biometrics.deleteKeys();
+      }
+
+      if (this.currentUser) {
+        await this.updateUser({ biometricsEnabled: false });
+      }
+      
+      console.log('Biometrics disabled successfully');
+      return true;
+    } catch (error) {
+      console.error('Failed to disable biometrics:', error);
+      return false;
+    }
+  }
+
+  async isBiometricAvailable(): Promise<boolean> {
+    try {
+      const { available } = await this.biometrics.isSensorAvailable();
+      return available;
+    } catch (error) {
+      console.error('Failed to check biometric availability:', error);
+      return false;
+    }
+  }
+
+  async isBiometricEnabled(): Promise<boolean> {
+    return this.currentUser?.biometricsEnabled || false;
+  }
+
+  // Session management
+  async refreshSession(): Promise<boolean> {
+    try {
+      if (!this.isAuthenticated) {
+        return false;
+      }
+
+      // Extend session if user is still authenticated
+      if (this.currentUser) {
+        this.currentUser.lastLogin = new Date().toISOString();
+        await this.saveUserData(this.currentUser);
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Failed to refresh session:', error);
+      return false;
+    }
+  }
+
+  async isSessionValid(): Promise<boolean> {
+    if (!this.isAuthenticated || !this.currentUser) {
+      return false;
+    }
+
+    // Check if session is still valid (example: within last 24 hours)
+    const lastLogin = new Date(this.currentUser.lastLogin);
+    const now = new Date();
+    const hoursSinceLogin = (now.getTime() - lastLogin.getTime()) / (1000 * 60 * 60);
+    
+    return hoursSinceLogin < 24; // 24 hour session timeout
+  }
+
+  async cleanup(): Promise<void> {
+    this.currentUser = null;
+    this.isAuthenticated = false;
+    this.storageService = null;
+    console.log('Auth service cleaned up');
+  }
+}

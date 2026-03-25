@@ -1,4 +1,5 @@
 import { ICryptoAdapter, KeyPair } from '../types';
+import CryptoJS from 'crypto-js';
 
 /**
  * Crypto adapter for Expo environment
@@ -26,51 +27,55 @@ export class ExpoCryptoAdapter implements ICryptoAdapter {
     try {
       // Generate 32 random bytes for AES-256 key
       const randomBytes = await this.Crypto.getRandomBytesAsync(32);
-      return Array.from(randomBytes, byte => byte.toString(16).padStart(2, '0')).join('');
+      return Array.from(randomBytes, (byte: number) => byte.toString(16).padStart(2, '0')).join('');
     } catch (error) {
-      console.warn('[ExpoCryptoAdapter] Failed to generate secure key, using fallback');
-      // Fallback to timestamp + random
-      return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+      // Fallback: use crypto-js secure random
+      console.warn('[ExpoCryptoAdapter] expo-crypto unavailable, using crypto-js fallback');
+      const wordArray = CryptoJS.lib.WordArray.random(32);
+      return wordArray.toString(CryptoJS.enc.Hex);
     }
   }
 
+  /**
+   * Encrypt data using AES-256 via crypto-js.
+   *
+   * CryptoJS.AES.encrypt produces a Base64 OpenSSL-format string containing
+   * a random salt, derived IV, and ciphertext — no plaintext is stored.
+   */
   async encrypt(data: string, key: string): Promise<string> {
-    if (!this.Crypto) {
-      await this.initialize();
-    }
-
     try {
-      // Simple hash-based encryption (in production, use proper AES)
-      const combined = key + data;
-      const hash = await this.Crypto.digestStringAsync(
-        this.Crypto.CryptoDigestAlgorithm.SHA256,
-        combined,
-        { encoding: this.Crypto.CryptoEncoding.HEX }
-      );
-
-      // For now, store the original data with the hash for verification
-      // In production, implement proper AES encryption
-      return JSON.stringify({
-        data: data,
-        hash: hash,
-        timestamp: Date.now()
-      });
+      return CryptoJS.AES.encrypt(data, key).toString();
     } catch (error) {
-      console.warn('[ExpoCryptoAdapter] Encryption failed, returning plain text:', error);
-      return data;
+      console.error('[ExpoCryptoAdapter] Encryption failed:', error);
+      throw new Error('Failed to encrypt data');
     }
   }
 
+  /**
+   * Decrypt data using AES-256 via crypto-js.
+   *
+   * Handles backward compatibility with old {data, hash} JSON format.
+   */
   async decrypt(encryptedData: string, key: string): Promise<string> {
+    // Backward compatibility: detect old {data, hash} format
     try {
       const parsed = JSON.parse(encryptedData);
       if (parsed.data && parsed.hash) {
-        // In production, verify the hash before returning data
         return parsed.data;
       }
-      return encryptedData; // Fallback for non-encrypted data
+    } catch (_) {
+      // Not JSON — proceed with AES decryption
+    }
+
+    try {
+      const bytes = CryptoJS.AES.decrypt(encryptedData, key);
+      const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+      if (!decrypted) {
+        throw new Error('Decryption produced empty result');
+      }
+      return decrypted;
     } catch (error) {
-      // If parsing fails, assume it's plain text
+      console.warn('[ExpoCryptoAdapter] Decryption failed, returning raw data:', error);
       return encryptedData;
     }
   }

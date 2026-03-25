@@ -1,5 +1,6 @@
 import { IStorageAdapter } from '../types';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import CryptoJS from 'crypto-js';
 
 /**
  * Storage adapter for Expo environment using SecureStore + AsyncStorage
@@ -171,64 +172,72 @@ export class ExpoStorageAdapter implements IStorageAdapter {
   }
 
   /**
-   * Simple encryption using Expo Crypto
+   * Encrypt data using AES-256 via crypto-js.
+   *
+   * The encryption key is stored in SecureStore (OS-level keychain).
+   * CryptoJS.AES.encrypt produces a Base64 OpenSSL-format string containing
+   * a random salt, derived IV, and ciphertext — no plaintext is stored.
    */
   private async encrypt(text: string): Promise<string> {
     try {
-      console.log('[ExpoStorageAdapter] 🔐 encrypt: loading Crypto module...');
-      const Crypto = require('expo-crypto');
-      console.log('[ExpoStorageAdapter] 🔐 encrypt: getting encryption key...');
       const key = await this.getEncryptionKey();
-      console.log('[ExpoStorageAdapter] 🔐 encrypt: creating hash...');
-
-      // Simple hash-based encryption (in production, use proper AES)
-      const combined = key + text;
-      const hash = await Crypto.digestStringAsync(
-        Crypto.CryptoDigestAlgorithm.SHA256,
-        combined,
-        { encoding: Crypto.CryptoEncoding.HEX }
-      );
-
-      console.log('[ExpoStorageAdapter] 🔐 encrypt: hash created, stringifying...');
-      // Store both the hash and the original length for verification
-      const result = JSON.stringify({ hash, text: text });
-      console.log('[ExpoStorageAdapter] ✅ encrypt: complete');
-      return result;
+      const ciphertext = CryptoJS.AES.encrypt(text, key).toString();
+      return ciphertext;
     } catch (error) {
-      console.warn('[ExpoStorageAdapter] Encryption failed, storing as plain text:', error);
-      return text;
+      console.error('[ExpoStorageAdapter] Encryption failed:', error);
+      throw new Error('Failed to encrypt data for storage');
     }
   }
 
   /**
-   * Simple decryption
+   * Decrypt data using AES-256 via crypto-js.
+   *
+   * Handles backward compatibility: if stored data is in the old
+   * {hash, text} JSON format (from the previous simulated encryption),
+   * extracts the plaintext and returns it. New data is real AES ciphertext.
    */
   private async decrypt(encrypted: string): Promise<string> {
+    // Backward compatibility: detect old {hash, text} format
     try {
       const parsed = JSON.parse(encrypted);
       if (parsed.text && parsed.hash) {
-        // For now, just return the text (in production, verify the hash)
+        // Old simulated format — return the plaintext directly.
+        // On next write, it will be re-encrypted with real AES.
         return parsed.text;
       }
-      return encrypted; // Fallback for non-encrypted data
+    } catch (_) {
+      // Not JSON — proceed with AES decryption
+    }
+
+    try {
+      const key = await this.getEncryptionKey();
+      const bytes = CryptoJS.AES.decrypt(encrypted, key);
+      const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+      if (!decrypted) {
+        throw new Error('Decryption produced empty result');
+      }
+      return decrypted;
     } catch (error) {
-      // If parsing fails, assume it's plain text
+      // If decryption fails, the data may be plain text from before encryption was enabled
+      console.warn('[ExpoStorageAdapter] Decryption failed, returning raw data:', error);
       return encrypted;
     }
   }
 
   /**
-   * Generate a random encryption key
+   * Generate a cryptographically secure random encryption key.
+   * Uses expo-crypto for secure random bytes, with crypto-js WordArray fallback.
    */
   private async generateRandomKey(): Promise<string> {
     try {
       const Crypto = require('expo-crypto');
-      return await Crypto.getRandomBytesAsync(32).then(bytes =>
-        Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
-      );
+      const bytes = await Crypto.getRandomBytesAsync(32);
+      return Array.from(bytes, (byte: number) => byte.toString(16).padStart(2, '0')).join('');
     } catch (error) {
-      // Fallback to timestamp-based key
-      return Date.now().toString(36) + Math.random().toString(36);
+      // Fallback: use crypto-js secure random (backed by Math.random on some
+      // platforms, but still better than raw Date.now + Math.random)
+      const wordArray = CryptoJS.lib.WordArray.random(32);
+      return wordArray.toString(CryptoJS.enc.Hex);
     }
   }
 }

@@ -1,6 +1,7 @@
 import { sha256 } from '@noble/hashes/sha256';
 import { randomBytes } from '@noble/hashes/utils';
 import * as ed25519 from '@noble/ed25519';
+import CryptoJS from 'crypto-js';
 
 export class CryptoUtil {
   /**
@@ -20,21 +21,16 @@ export class CryptoUtil {
   }
 
   /**
-   * Encrypt data using AES-256-GCM (simulated)
+   * Encrypt data using AES-256 (crypto-js).
+   *
+   * Uses CryptoJS.AES which applies AES-256-CBC with a random IV
+   * derived from the passphrase via OpenSSL-compatible key derivation.
+   * The output is a Base64 string containing the salt, IV, and ciphertext.
    */
   async encrypt(data: string, key: string): Promise<string> {
     try {
-      // In a real implementation, this would use actual AES-256-GCM encryption
-      // For now, we'll use a simple XOR cipher with base64 encoding for demonstration
-      const keyBytes = Buffer.from(key, 'hex');
-      const dataBytes = Buffer.from(data, 'utf8');
-      
-      const encrypted = Buffer.alloc(dataBytes.length);
-      for (let i = 0; i < dataBytes.length; i++) {
-        encrypted[i] = dataBytes[i] ^ keyBytes[i % keyBytes.length];
-      }
-      
-      return encrypted.toString('base64');
+      const ciphertext = CryptoJS.AES.encrypt(data, key).toString();
+      return ciphertext;
     } catch (error) {
       console.error('Encryption failed:', error);
       throw new Error('Failed to encrypt data');
@@ -42,20 +38,16 @@ export class CryptoUtil {
   }
 
   /**
-   * Decrypt data using AES-256-GCM (simulated)
+   * Decrypt data using AES-256 (crypto-js).
    */
   async decrypt(encryptedData: string, key: string): Promise<string> {
     try {
-      // Corresponding decryption for the simple XOR cipher
-      const keyBytes = Buffer.from(key, 'hex');
-      const encryptedBytes = Buffer.from(encryptedData, 'base64');
-      
-      const decrypted = Buffer.alloc(encryptedBytes.length);
-      for (let i = 0; i < encryptedBytes.length; i++) {
-        decrypted[i] = encryptedBytes[i] ^ keyBytes[i % keyBytes.length];
+      const bytes = CryptoJS.AES.decrypt(encryptedData, key);
+      const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+      if (!decrypted) {
+        throw new Error('Decryption produced empty result — key mismatch or corrupted data');
       }
-      
-      return decrypted.toString('utf8');
+      return decrypted;
     } catch (error) {
       console.error('Decryption failed:', error);
       throw new Error('Failed to decrypt data');
@@ -141,20 +133,18 @@ export class CryptoUtil {
   }
 
   /**
-   * Derive a key from a password using PBKDF2 (simulated)
+   * Derive a key from a password using PBKDF2 (crypto-js).
+   *
+   * Produces a 256-bit key using HMAC-SHA256 with the specified iteration count.
    */
   async deriveKey(password: string, salt: string, iterations: number = 100000): Promise<string> {
     try {
-      // In a real implementation, this would use PBKDF2
-      // For now, we'll use multiple rounds of hashing
-      let derived = password + salt;
-      
-      for (let i = 0; i < Math.min(iterations, 1000); i++) {
-        const hash = sha256(new TextEncoder().encode(derived));
-        derived = Buffer.from(hash).toString('hex');
-      }
-      
-      return derived.substring(0, 64); // 256 bits
+      const key = CryptoJS.PBKDF2(password, salt, {
+        keySize: 256 / 32, // 256-bit key (8 words of 32 bits)
+        iterations: iterations,
+        hasher: CryptoJS.algo.SHA256,
+      });
+      return key.toString(CryptoJS.enc.Hex);
     } catch (error) {
       console.error('Key derivation failed:', error);
       throw new Error('Failed to derive key');

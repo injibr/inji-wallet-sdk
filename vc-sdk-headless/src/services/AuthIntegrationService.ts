@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 
 export interface AuthCheckResult {
   required: boolean;
@@ -18,13 +19,18 @@ export interface UserInfo {
 export class AuthIntegrationService {
 
   /**
-   * Helper to check if user is authenticated
+   * Helper to check if user is authenticated and token is not expired
    */
   private static async isUserAuthenticated(): Promise<boolean> {
     try {
-      const accessToken = await AsyncStorage.getItem('access_token');
-      const idToken = await AsyncStorage.getItem('id_token');
-      return !!(accessToken && idToken);
+      const [accessToken, idToken, expiresAt] = await Promise.all([
+        SecureStore.getItemAsync('access_token'),
+        SecureStore.getItemAsync('id_token'),
+        AsyncStorage.getItem('expires_at'),
+      ]);
+      if (!accessToken || !idToken) return false;
+      if (expiresAt && Date.now() > parseInt(expiresAt)) return false;
+      return true;
     } catch (error) {
       console.error('[AUTH INTEGRATION] Error checking authentication:', error);
       return false;
@@ -36,54 +42,34 @@ export class AuthIntegrationService {
    */
   private static async getAllAuthDataFromStorage() {
     try {
-      const [
-        accessToken,
-        idToken,
-        tokenType,
-        expiresIn,
-        scope,
-        userSub,
-        userName,
-        userSocialName,
-        userProfile,
-        userPicture,
-        userEmail,
-        userEmailVerified,
-        userData
-      ] = await Promise.all([
-        AsyncStorage.getItem('access_token'),
-        AsyncStorage.getItem('id_token'),
-        AsyncStorage.getItem('token_type'),
-        AsyncStorage.getItem('expires_in'),
-        AsyncStorage.getItem('scope'),
-        AsyncStorage.getItem('user_sub'),
-        AsyncStorage.getItem('user_name'),
-        AsyncStorage.getItem('user_social_name'),
-        AsyncStorage.getItem('user_profile'),
-        AsyncStorage.getItem('user_picture'),
-        AsyncStorage.getItem('user_email'),
-        AsyncStorage.getItem('user_email_verified'),
-        AsyncStorage.getItem('user_data')
+      const [accessToken, idToken, rawUserData, metaPairs] = await Promise.all([
+        SecureStore.getItemAsync('access_token'),
+        SecureStore.getItemAsync('id_token'),
+        SecureStore.getItemAsync('user_data'),
+        AsyncStorage.multiGet(['token_type', 'expires_at', 'scope']),
       ]);
+
+      const meta = Object.fromEntries(metaPairs.map(([k, v]) => [k, v]));
+      const userData = rawUserData ? JSON.parse(rawUserData) : null;
 
       return {
         token: {
           accessToken,
           idToken,
-          tokenType,
-          expiresIn: expiresIn ? parseInt(expiresIn, 10) : null,
-          scope
+          tokenType: meta.token_type,
+          expiresAt: meta.expires_at ? parseInt(meta.expires_at, 10) : null,
+          scope: meta.scope,
         },
-        user: {
-          sub: userSub || '',
-          name: userName || '',
-          socialName: userSocialName || '',
-          profile: userProfile || '',
-          picture: userPicture || '',
-          email: userEmail || '',
-          emailVerified: userEmailVerified === 'true',
-          fullData: userData ? JSON.parse(userData) : null
-        }
+        user: userData ? {
+          sub: userData.sub || '',
+          name: userData.name || '',
+          socialName: userData.social_name || '',
+          profile: userData.profile || '',
+          picture: userData.picture || '',
+          email: userData.email || '',
+          emailVerified: userData.email_verified === true || userData.email_verified === 'true',
+          fullData: userData,
+        } : null,
       };
     } catch (error) {
       console.error('[AUTH INTEGRATION] Error getting auth data from storage:', error);
@@ -119,7 +105,7 @@ export class AuthIntegrationService {
       }
 
       // Check if we have access token
-      const accessToken = await AsyncStorage.getItem('access_token');
+      const accessToken = await SecureStore.getItemAsync('access_token');
       if (!accessToken) {
         console.log('[AUTH INTEGRATION] Authentication required - no access token found');
         return {
@@ -189,10 +175,18 @@ export class AuthIntegrationService {
     try {
       console.log('[AUTH INTEGRATION] Getting access token...');
 
-      const accessToken = await AsyncStorage.getItem('access_token');
+      const [accessToken, expiresAt] = await Promise.all([
+        SecureStore.getItemAsync('access_token'),
+        AsyncStorage.getItem('expires_at'),
+      ]);
 
       if (!accessToken) {
         console.log('[AUTH INTEGRATION] No access token found');
+        return null;
+      }
+
+      if (expiresAt && Date.now() > parseInt(expiresAt)) {
+        console.log('[AUTH INTEGRATION] Access token expired');
         return null;
       }
 
@@ -220,14 +214,12 @@ export class AuthIntegrationService {
       }
 
       // Check if token has expired
-      const expiresIn = authData.token.expiresIn;
-      if (expiresIn && expiresIn <= 0) {
+      const expiresAt = (authData.token as any).expiresAt;
+      if (expiresAt && Date.now() > expiresAt) {
         console.log('[AUTH INTEGRATION] Session invalid - token expired');
         return false;
       }
 
-      // Optionally, you could make a test API call to verify the token
-      // For now, we'll just check if we have the required data
       const hasRequiredData = !!(
         authData.token.accessToken &&
         authData.user &&
@@ -322,14 +314,14 @@ export class AuthIntegrationService {
     try {
       console.log('[AUTH INTEGRATION] Clearing authentication data...');
 
-      const keysToRemove = [
-        'auth_params', 'auth_code', 'auth_state',
-        'access_token', 'id_token', 'token_type', 'expires_in', 'scope', 'token_data',
-        'user_sub', 'user_name', 'user_social_name', 'user_profile', 'user_picture',
-        'user_email', 'user_email_verified', 'user_data'
-      ];
-
-      await Promise.all(keysToRemove.map(key => AsyncStorage.removeItem(key)));
+      await Promise.all([
+        SecureStore.deleteItemAsync('access_token'),
+        SecureStore.deleteItemAsync('id_token'),
+        SecureStore.deleteItemAsync('auth_code'),
+        SecureStore.deleteItemAsync('c_nonce'),
+        SecureStore.deleteItemAsync('user_data'),
+        AsyncStorage.multiRemove(['token_type', 'expires_at', 'scope', 'auth_state']),
+      ]);
 
       console.log('[AUTH INTEGRATION] Authentication data cleared successfully');
 

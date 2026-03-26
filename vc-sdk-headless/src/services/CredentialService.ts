@@ -527,7 +527,8 @@ export class CredentialService {
   async requestAndDownload(
     issuer: any,
     credentialType: any,
-    progressCallback?: (progress: string) => void
+    progressCallback?: (progress: string) => void,
+    accessToken?: string
   ): Promise<VC> {
     if (!this.storageService) {
       throw new Error('Storage service not initialized');
@@ -548,10 +549,10 @@ export class CredentialService {
 
       progressCallback?.('Getting access token...');
 
-      // Get access token for authentication
-      const accessToken = await AuthIntegrationService.getAccessToken();
+      // Use provided token first, fallback to stored token
+      const resolvedToken = accessToken || await AuthIntegrationService.getAccessToken();
 
-      if (!accessToken) {
+      if (!resolvedToken) {
         throw new Error('No access token available. User must be authenticated.');
       }
 
@@ -577,7 +578,7 @@ export class CredentialService {
         },
         proof: {
           proof_type: 'jwt',
-          jwt: await this.generateProperJWTProof(accessToken, issuer)
+          jwt: await this.generateProperJWTProof(resolvedToken, issuer)
         },
         doctype: credentialType.id,
         issuerId: issuer.id
@@ -589,7 +590,7 @@ export class CredentialService {
       const headers = {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'Authorization': `Bearer ${accessToken}`
+        'Authorization': `Bearer ${resolvedToken}`
       };
 
       console.log('\n🌐 [API_REQUEST_LOG] ======= CREDENTIAL API REQUEST DETAILS =======');

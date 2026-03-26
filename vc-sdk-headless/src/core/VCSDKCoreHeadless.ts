@@ -180,7 +180,7 @@ export class VCSDKCoreHeadless {
        *        credential:downloadComplete, credential:downloadError,
        *        credential:notAvailable424, auth:required
        */
-      download: async (issuer: any, credentialType: any): Promise<VC | null> => {
+      download: async (issuer: any, credentialType: any, accessToken?: string): Promise<VC | null> => {
         this.ensureInitialized();
 
         try {
@@ -191,9 +191,9 @@ export class VCSDKCoreHeadless {
             issuer,
             credentialType,
             (progress: string) => {
-              // Parse progress and emit event
               this.events.emitCredentialDownloadProgress(0, 100, 50, progress);
-            }
+            },
+            accessToken
           );
 
           this.events.emitCredentialDownloadComplete(credential, credentialType, issuer);

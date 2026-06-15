@@ -175,156 +175,7 @@ export class NativeCryptoJWT {
     throw new Error(`Unsupported key type: ${keyType}`);
   }
 
-  // React Native compatible JWT creation with REAL RSA signatures using JOSE
-  async createReactNativeCompatibleJWT(payload, crypto) {
-    console.log('[NATIVE_CRYPTO_JWT] 🔧 Creating React Native JWT with REAL RSA signatures...');
-
-    try {
-      // Try to use JOSE library for real RSA signatures (React Native compatible)
-      let jwt;
-
-      try {
-        console.log('[NATIVE_CRYPTO_JWT] 🔍 Attempting to load JOSE library...');
-        let jose;
-        try {
-          // Try dynamic import first (ES modules)
-          const joseModule = await import('jose');
-          jose = joseModule;
-          console.log('[NATIVE_CRYPTO_JWT] ✅ JOSE library loaded via dynamic import!');
-        } catch (importError) {
-          try {
-            // Fallback to require (CommonJS)
-            jose = require('jose');
-            console.log('[NATIVE_CRYPTO_JWT] ✅ JOSE library loaded via require!');
-          } catch (requireError) {
-            throw new Error(`Failed to load JOSE library: import failed (${importError.message}), require failed (${requireError.message})`);
-          }
-        }
-
-        console.log('[NATIVE_CRYPTO_JWT] 🔍 Creating RSA key pair with JOSE...');
-
-        // Generate RSA key pair using JOSE (React Native compatible)
-        const { publicKey, privateKey } = await jose.generateKeyPair('RS256', { modulusLength: 2048 });
-        console.log('[NATIVE_CRYPTO_JWT] ✅ RSA key pair created successfully with JOSE!');
-
-        // Export public key as JWK
-        const publicKeyJWK = await jose.exportJWK(publicKey);
-        console.log('[NATIVE_CRYPTO_JWT] ✅ Generated real RSA JWK with JOSE!');
-
-        // Ensure JWK field order matches RSA example: e, kty, n
-        const orderedJWK = {
-          e: publicKeyJWK.e,
-          kty: publicKeyJWK.kty,
-          n: publicKeyJWK.n
-        };
-
-        console.log('[NATIVE_CRYPTO_JWT] ✅ Created real RSA JWK with correct field order');
-
-        // Create header with RSA format [typ, alg, jwk] - exact order from example
-        const header = {
-          typ: 'openid4vci-proof+jwt',
-          alg: 'RS256',
-          jwk: orderedJWK
-        };
-
-        console.log('[NATIVE_CRYPTO_JWT] 🔏 Creating REAL RSA signature with JOSE...');
-
-        // Create JWT manually to control header format exactly
-        const headerBase64 = this.base64UrlEncode(JSON.stringify(header));
-        const payloadBase64 = this.base64UrlEncode(JSON.stringify(payload));
-        const signingInput = `${headerBase64}.${payloadBase64}`;
-
-        // Use JOSE to sign the input directly
-        const encoder = new TextEncoder();
-        const data = encoder.encode(signingInput);
-
-        // Sign with private key using compact serialization
-        const signature = await new jose.CompactSign(data)
-          .setProtectedHeader({ alg: 'RS256' })
-          .sign(privateKey);
-
-        // Extract just the signature part (after the last dot)
-        const parts = signature.split('.');
-        let extractedSignature = parts[2];
-
-        // Ensure proper base64url encoding (though JOSE should already do this)
-        extractedSignature = extractedSignature.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-
-        jwt = `${signingInput}.${extractedSignature}`;
-
-        console.log('[NATIVE_CRYPTO_JWT] ✅ REAL RSA JWT created with JOSE!');
-        console.log('[NATIVE_CRYPTO_JWT] 🎯 This uses actual RSA cryptographic signatures!');
-        console.log('[NATIVE_CRYPTO_JWT] 🔐 Server should accept this JWT!');
-
-        return jwt;
-
-      } catch (joseError) {
-        console.error('[NATIVE_CRYPTO_JWT] ❌ JOSE library failed:', joseError.message);
-        console.error('[NATIVE_CRYPTO_JWT] Error stack:', joseError.stack);
-        console.log('[NATIVE_CRYPTO_JWT] Falling back to expo-crypto approach...');
-      }
-
-      // Fallback to expo-crypto with RSA format
-      if (crypto) {
-        console.log('[NATIVE_CRYPTO_JWT] 🔐 Using expo-crypto for RSA-like signatures...');
-
-        try {
-          // Create deterministic but realistic RSA components
-          const eComponent = 'AQAB'; // Standard RSA public exponent
-          const nComponent = this.generateConsistentKey(payload.iss + payload.iat + 'modulus', 342); // RSA modulus
-
-          const mockPublicKeyJWK = {
-            e: eComponent,
-            kty: 'RSA',
-            n: nComponent
-          };
-
-          // Create header with RSA format [typ, alg, jwk]
-          const header = {
-            typ: 'openid4vci-proof+jwt',
-            alg: 'RS256',
-            jwk: mockPublicKeyJWK
-          };
-
-          const headerBase64 = this.base64UrlEncode(JSON.stringify(header));
-          const payloadBase64 = this.base64UrlEncode(JSON.stringify(payload));
-          const signingInput = `${headerBase64}.${payloadBase64}`;
-
-          // Use expo-crypto to create a more realistic signature
-          const hash = await crypto.digestStringAsync(
-            crypto.CryptoDigestAlgorithm.SHA256,
-            signingInput + eComponent, // Add key material to hash
-            { encoding: crypto.CryptoEncoding.BASE64 }
-          );
-
-          // Convert hash to signature-like format for RSA
-          const signature = this.formatHashAsRSASignature(hash);
-
-          jwt = `${signingInput}.${signature}`;
-          console.log('[NATIVE_CRYPTO_JWT] ✅ expo-crypto RSA-like JWT created');
-
-          return jwt;
-
-        } catch (cryptoError) {
-          console.log('[NATIVE_CRYPTO_JWT] ⚠️ expo-crypto failed:', cryptoError.message);
-        }
-      }
-
-      // Final fallback - but first try your working JOSE approach
-      console.log('[NATIVE_CRYPTO_JWT] Trying improved JOSE approach for React Native...');
-      try {
-        return await this.createJoseJWTWithEmbeddedKey(payload);
-      } catch (joseError2) {
-        console.error('[NATIVE_CRYPTO_JWT] ❌ Improved JOSE also failed:', joseError2.message);
-        console.log('[NATIVE_CRYPTO_JWT] Using final fallback with deterministic signatures...');
-        return await this.createFallbackJWT(payload);
-      }
-
-    } catch (error) {
-      console.error('[NATIVE_CRYPTO_JWT] ❌ React Native JWT creation failed:', error.message);
-      throw error;
-    }
-  }
+  // Removed - was using jose which is not available in React Native
 
   // Format hash as RSA-like signature (IMPROVED with proper base64url)
   formatHashAsRSASignature(hash) {
@@ -481,78 +332,8 @@ export class NativeCryptoJWT {
     return result;
   }
 
-  // Your working JOSE approach for React Native - EXACTLY as you provided with key reuse
   async createJoseJWTWithEmbeddedKey(payload) {
-    console.log('[NATIVE_CRYPTO_JWT] 🚀 Using JOSE approach with key reuse...');
-
-    const jose = await import('jose');
-
-    // 🔑 STEP 1: Check for existing keys first (INJI approach)
-    console.log('🔍 [KEY_MANAGEMENT] Checking for existing RSA keys in JOSE method...');
-    const hasKeys = await this.hasExistingKeys();
-
-    let publicKey, privateKey, pubJwk;
-
-    if (hasKeys) {
-      console.log('✅ [KEY_MANAGEMENT] Found existing RSA keys - converting to JOSE format');
-      const existingKeys = await this.getExistingKeys();
-
-      if (existingKeys && existingKeys.publicJwk) {
-        // Use existing JWK and reconstruct JOSE keys
-        pubJwk = existingKeys.publicJwk;
-
-        // Import existing keys into JOSE format
-        try {
-          publicKey = await jose.importJWK(pubJwk);
-          // For private key, we'll need to reconstruct from stored PEM
-          const privateKeyPem = existingKeys.privateKey;
-          privateKey = await jose.importPKCS8(privateKeyPem);
-
-          console.log('🔑 [KEY_MANAGEMENT] Successfully converted stored keys to JOSE format');
-        } catch (conversionError) {
-          console.log('⚠️  [KEY_MANAGEMENT] Failed to convert stored keys to JOSE format, regenerating');
-          hasKeys = false; // Force regeneration
-        }
-      } else {
-        hasKeys = false; // Force regeneration
-      }
-    }
-
-    if (!hasKeys) {
-      console.log('🔄 [KEY_MANAGEMENT] No existing keys found - generating new 2048-bit RSA key pair with JOSE');
-      console.log('⚠️  [KEY_MANAGEMENT] This is a ONE-TIME operation - keys will be reused for all future credentials');
-
-      // Generate 2048-bit RSA key pair
-      const keyGenResult = await jose.generateKeyPair('RS256', { modulusLength: 2048 });
-      publicKey = keyGenResult.publicKey;
-      privateKey = keyGenResult.privateKey;
-
-      // Export public key as JWK
-      pubJwk = await jose.exportJWK(publicKey);
-      pubJwk.use = "sig";  // for JWT signature
-      pubJwk.alg = "RS256";
-
-      // Store keys for future reuse
-      const privateKeyPem = await jose.exportPKCS8(privateKey);
-      const publicKeyPem = await jose.exportSPKI(publicKey);
-      await this.storeKeys(privateKeyPem, publicKeyPem, pubJwk);
-      console.log('💾 [KEY_MANAGEMENT] JOSE keys stored for future reuse - next credentials will be instant!');
-    }
-
-    // Create JWT with your EXACT approach - using pubJwk directly without reordering
-    const jwt = await new jose.SignJWT(payload)
-      .setProtectedHeader({
-        typ: "openid4vci-proof+jwt",
-        alg: "RS256",
-        jwk: pubJwk   // <-- embed public key here EXACTLY as you do
-      })
-      .sign(privateKey);
-
-    console.log('[NATIVE_CRYPTO_JWT] ✅ Successfully created JWT with REAL RSA signature!');
-    console.log(`[NATIVE_CRYPTO_JWT] JWT length: ${jwt.length}`);
-    console.log(`[NATIVE_CRYPTO_JWT] 🔍 Generated JWT: ${jwt}`);
-
-    return jwt;
+    return await this.createNodeForgeJWT(payload);
   }
 
   // Simple hash function for consistent key generation
@@ -628,33 +409,9 @@ export class NativeCryptoJWT {
         }
       }
 
-      // Fallback to React Native compatible approach - try node-forge first!
-      console.log('[NATIVE_CRYPTO_JWT] ⚠️ Native modules not available, using fallback chain...');
-
-      // Try node-forge first (pure JavaScript RSA)
-      try {
-        console.log('[NATIVE_CRYPTO_JWT] 🔧 Trying node-forge as primary fallback...');
-        console.log('[DEBUG] About to call createNodeForgeJWT with payload:', JSON.stringify(rsaPayload, null, 2));
-        const jwt = await this.createNodeForgeJWT(rsaPayload);
-        console.log('[NATIVE_CRYPTO_JWT] ✅ SUCCESS: node-forge JWT created!');
-        return jwt;
-      } catch (nodeForgeError) {
-        console.error('[NATIVE_CRYPTO_JWT] ❌ node-forge failed:', nodeForgeError.message);
-        console.error('[DEBUG] node-forge error stack:', nodeForgeError.stack);
-        console.log('[NATIVE_CRYPTO_JWT] Falling back to other methods...');
-      }
-
-      // Try expo-crypto as secondary option
-      let crypto = null;
-      try {
-        crypto = require('expo-crypto');
-        console.log('[NATIVE_CRYPTO_JWT] ✅ expo-crypto available');
-      } catch {
-        console.log('[NATIVE_CRYPTO_JWT] ⚠️ No expo-crypto available');
-      }
-
-      // Create JWT with manual construction (JOSE or deterministic)
-      const jwt = await this.createReactNativeCompatibleJWT(rsaPayload, crypto);
+      // Fallback to node-forge pure JavaScript RSA
+      console.log('[NATIVE_CRYPTO_JWT] ⚠️ Native modules not available, using node-forge fallback...');
+      const jwt = await this.createNodeForgeJWT(rsaPayload);
 
       console.log('[NATIVE_CRYPTO_JWT] ✅ FALLBACK JWT GENERATED');
       console.log('[NATIVE_CRYPTO_JWT] JWT length:', jwt.length);
@@ -909,16 +666,7 @@ export class NativeCryptoJWT {
           console.error('❌ [JWT_GENERATION_LOG] 2048-bit RSA generation failed:', keyGenError.message);
           console.log('🔄 [JWT_GENERATION_LOG] Trying JOSE library as fallback (also 2048-bit)...');
 
-          // Fallback to JOSE which should also generate 2048-bit keys
-          try {
-            console.log('🔄 [JWT_GENERATION_LOG] Using JOSE for 2048-bit RSA key generation...');
-            return await this.createJoseJWTWithEmbeddedKey(payload);
-          } catch (joseError) {
-            console.error('❌ [JWT_GENERATION_LOG] JOSE fallback also failed:', joseError.message);
-            console.log('❌ [JWT_GENERATION_LOG] Both node-forge and JOSE failed to generate 2048-bit keys');
-
-            throw new Error(`Server requires 2048-bit RSA keys but generation failed: node-forge (${keyGenError.message}), JOSE (${joseError.message})`);
-          }
+          throw new Error(`Server requires 2048-bit RSA keys but generation failed: ${keyGenError.message}`);
         }
       }
 
@@ -998,28 +746,8 @@ export class NativeCryptoJWT {
     }
   }
 
-  // Updated fallback method to use node-forge as primary option
   async createFallbackJWT(payload) {
-    console.log('[NATIVE_CRYPTO_JWT] Creating fallback JWT with node-forge...');
-
-    try {
-      // Try node-forge first (pure JavaScript, works in React Native)
-      return await this.createNodeForgeJWT(payload);
-    } catch (nodeForgeError) {
-      console.error('[NATIVE_CRYPTO_JWT] ❌ node-forge failed:', nodeForgeError.message);
-
-      // Fall back to JOSE if node-forge fails
-      try {
-        console.log('[NATIVE_CRYPTO_JWT] Falling back to JOSE...');
-        return await this.createJoseJWTWithEmbeddedKey(payload);
-      } catch (joseError) {
-        console.error('[NATIVE_CRYPTO_JWT] ❌ JOSE failed:', joseError.message);
-
-        // Final fallback to deterministic approach
-        console.log('[NATIVE_CRYPTO_JWT] Final fallback to deterministic JWT...');
-        return this.createDeterministicJWT(payload);
-      }
-    }
+    return await this.createNodeForgeJWT(payload);
   }
 }
 

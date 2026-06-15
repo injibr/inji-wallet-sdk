@@ -159,15 +159,14 @@ export class VCSDKCoreHeadless {
        *        credential:downloadComplete, credential:downloadError,
        *        credential:notAvailable424, auth:required
        */
-      download: async (issuer, credentialType) => {
+      download: async (issuer, credentialType, accessToken) => {
         this.ensureInitialized();
         try {
           console.log('[VCSDKHeadless] Starting credential download');
           this.events.emitCredentialDownloadStarted(credentialType, issuer);
           const credential = await this.services.credential.requestAndDownload(issuer, credentialType, progress => {
-            // Parse progress and emit event
             this.events.emitCredentialDownloadProgress(0, 100, 50, progress);
-          });
+          }, accessToken);
           this.events.emitCredentialDownloadComplete(credential, credentialType, issuer);
           this.events.emitCredentialListUpdated(await this.services.credential.getAll());
           return credential;

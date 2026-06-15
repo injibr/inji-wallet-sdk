@@ -2,13 +2,7 @@
 
 import { VCVerifier } from "../utils/crypto/VCVerifier.js";
 import { AuthIntegrationService } from "./AuthIntegrationService.js";
-// Import jose functions with better error handling and React Native compatibility
-import * as jose from 'jose';
-const {
-  SignJWT,
-  generateKeyPair,
-  exportJWK
-} = jose;
+// jose removed - JWT operations handled by NativeCryptoJWT module
 
 // React Native compatibility imports
 import { Buffer } from 'buffer';
@@ -471,7 +465,7 @@ export class CredentialService {
       proofValue: this.uid.rnd(64) // In reality, this would be a real signature
     };
   }
-  async requestAndDownload(issuer, credentialType, progressCallback) {
+  async requestAndDownload(issuer, credentialType, progressCallback, accessToken) {
     if (!this.storageService) {
       throw new Error('Storage service not initialized');
     }
@@ -486,13 +480,12 @@ export class CredentialService {
       const vcId = this.uid.rnd();
 
       // Extract credential endpoint from issuer
-      const credentialEndpoint = issuer.issuerUrl || issuer.id;
-      const fullCredentialEndpoint = credentialEndpoint.includes('/credential') ? credentialEndpoint : `${credentialEndpoint}/credential`;
+      const fullCredentialEndpoint = issuer.credential_endpoint || issuer.issuerUrl + '/v1/certify/issuance/credential';
       progressCallback?.('Getting access token...');
 
-      // Get access token for authentication
-      const accessToken = await AuthIntegrationService.getAccessToken();
-      if (!accessToken) {
+      // Use provided token first, fallback to stored token
+      const resolvedToken = accessToken || (await AuthIntegrationService.getAccessToken());
+      if (!resolvedToken) {
         throw new Error('No access token available. User must be authenticated.');
       }
 
@@ -509,11 +502,11 @@ export class CredentialService {
         format: 'ldp_vc',
         credential_definition: {
           type: credentialTypes,
-          '@context': ['https://www.w3.org/2018/credentials/v1']
+          '@context': ["https://www.w3.org/ns/credentials/v2", "https://w3id.org/security/suites/ed25519-2020/v1"]
         },
         proof: {
           proof_type: 'jwt',
-          jwt: await this.generateProperJWTProof(accessToken, issuer)
+          jwt: await this.generateProperJWTProof(resolvedToken, issuer)
         },
         doctype: credentialType.id,
         issuerId: issuer.id
@@ -524,7 +517,7 @@ export class CredentialService {
       const headers = {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'Authorization': `Bearer ${accessToken}`
+        'Authorization': `Bearer ${resolvedToken}`
       };
       console.log('\n🌐 [API_REQUEST_LOG] ======= CREDENTIAL API REQUEST DETAILS =======');
       console.log(`📤 Request URL: ${fullCredentialEndpoint}`);
@@ -653,7 +646,7 @@ export class CredentialService {
           proof: receivedCredential.proof,
           // ✅ Original cryptographic proof from issuer
           // CRITICAL: Preserve @context from issuer (required for W3C VC compliance)
-          '@context': receivedCredential['@context'] || ['https://www.w3.org/2018/credentials/v1'],
+          '@context': receivedCredential['@context'] || ["https://www.w3.org/ns/credentials/v2", "https://w3id.org/security/suites/ed25519-2020/v1"],
           // ✅ W3C context
           metadata: {
             addedDate: new Date().toISOString(),

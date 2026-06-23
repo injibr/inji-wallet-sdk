@@ -8,6 +8,7 @@
   "files": [
     "src",
     "lib",
+    "android",
     "!**/__tests__",
     "!**/__fixtures__",
     "!**/__mocks__",

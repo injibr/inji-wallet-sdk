@@ -16,6 +16,7 @@ import { Buffer } from 'buffer';
 import * as ed from '@noble/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
 import bs58 from 'bs58';
+import { NativeModules, Platform } from 'react-native';
 
 // OpenID4VP Types
 export interface PresentationDefinition {
@@ -418,112 +419,44 @@ export class ShareVCService {
         return credential;
       });
 
-      // Build holder DID from public key
-      const publicKeyBase64url = Buffer.from(this.publicKey!).toString('base64')
-        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-      const holderDID = `did:jwk:${Buffer.from(JSON.stringify({ kty: 'OKP', crv: 'Ed25519', x: publicKeyBase64url })).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')}`;
+      // Build holder DID from public key (same format as inji-wallet: did:jwk:<base64url>#0)
+      const publicJwk = JSON.stringify({ kty: 'OKP', crv: 'Ed25519', x: Buffer.from(this.publicKey!).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '') });
+      const holderDID = `did:jwk:${Buffer.from(publicJwk).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')}#0`;
 
       const jsonld = require('jsonld');
 
-      // Embedded JSON-LD contexts to avoid network requests in React Native
-      const CONTEXTS: Record<string, any> = {
-        'https://www.w3.org/ns/credentials/v2': {
-          '@context': {
-            '@version': 1.1,
-            '@protected': true,
-            'id': '@id',
-            'type': '@type',
-            'VerifiableCredential': { '@id': 'https://www.w3.org/2018/credentials#VerifiableCredential' },
-            'VerifiablePresentation': { '@id': 'https://www.w3.org/2018/credentials#VerifiablePresentation' },
-            'verifiableCredential': { '@id': 'https://www.w3.org/2018/credentials#verifiableCredential', '@type': '@id', '@container': '@graph' },
-            'holder': { '@id': 'https://www.w3.org/2018/credentials#holder', '@type': '@id' },
-            'credentialSubject': { '@id': 'https://www.w3.org/2018/credentials#credentialSubject', '@type': '@id' },
-            'credentialStatus': { '@id': 'https://www.w3.org/2018/credentials#credentialStatus', '@type': '@id' },
-            'credentialSchema': { '@id': 'https://www.w3.org/2018/credentials#credentialSchema', '@type': '@id' },
-            'issuer': { '@id': 'https://www.w3.org/2018/credentials#issuer', '@type': '@id' },
-            'issuanceDate': { '@id': 'https://www.w3.org/2018/credentials#issuanceDate', '@type': 'http://www.w3.org/2001/XMLSchema#dateTime' },
-            'expirationDate': { '@id': 'https://www.w3.org/2018/credentials#expirationDate', '@type': 'http://www.w3.org/2001/XMLSchema#dateTime' },
-            'validFrom': { '@id': 'https://www.w3.org/2018/credentials#validFrom', '@type': 'http://www.w3.org/2001/XMLSchema#dateTime' },
-            'validUntil': { '@id': 'https://www.w3.org/2018/credentials#validUntil', '@type': 'http://www.w3.org/2001/XMLSchema#dateTime' },
-            'proof': { '@id': 'https://w3id.org/security#proof', '@type': '@id', '@container': '@graph' },
-            'termsOfUse': { '@id': 'https://www.w3.org/2018/credentials#termsOfUse', '@type': '@id' },
-            'evidence': { '@id': 'https://www.w3.org/2018/credentials#evidence', '@type': '@id' },
-            'refreshService': { '@id': 'https://www.w3.org/2018/credentials#refreshService', '@type': '@id' },
-          }
-        },
-        'https://www.w3.org/2018/credentials/v1': {
-          '@context': {
-            '@version': 1.1,
-            'id': '@id',
-            'type': '@type',
-            'cred': 'https://www.w3.org/2018/credentials#',
-            'sec': 'https://w3id.org/security#',
-            'xsd': 'http://www.w3.org/2001/XMLSchema#',
-            'VerifiableCredential': 'cred:VerifiableCredential',
-            'VerifiablePresentation': 'cred:VerifiablePresentation',
-            'verifiableCredential': { '@id': 'cred:verifiableCredential', '@type': '@id', '@container': '@graph' },
-            'holder': { '@id': 'cred:holder', '@type': '@id' },
-            'credentialSubject': { '@id': 'cred:credentialSubject', '@type': '@id' },
-            'credentialStatus': { '@id': 'cred:credentialStatus', '@type': '@id' },
-            'issuer': { '@id': 'cred:issuer', '@type': '@id' },
-            'issuanceDate': { '@id': 'cred:issuanceDate', '@type': 'xsd:dateTime' },
-            'expirationDate': { '@id': 'cred:expirationDate', '@type': 'xsd:dateTime' },
-            'proof': { '@id': 'sec:proof', '@type': '@id', '@container': '@graph' },
-          }
-        },
-        'https://w3id.org/security/suites/ed25519-2020/v1': {
-          '@context': {
-            'id': '@id',
-            'type': '@type',
-            '@protected': true,
-            'proof': { '@id': 'https://w3id.org/security#proof', '@type': '@id', '@container': '@graph' },
-            'Ed25519VerificationKey2020': { '@id': 'https://w3id.org/security#Ed25519VerificationKey2020', '@context': { '@protected': true, 'id': '@id', 'type': '@type', 'controller': { '@id': 'https://w3id.org/security#controller', '@type': '@id' }, 'revoked': { '@id': 'https://w3id.org/security#revoked', '@type': 'http://www.w3.org/2001/XMLSchema#dateTime' }, 'publicKeyMultibase': { '@id': 'https://w3id.org/security#publicKeyMultibase' } } },
-            'Ed25519Signature2020': { '@id': 'https://w3id.org/security#Ed25519Signature2020', '@context': { '@protected': true, 'id': '@id', 'type': '@type', 'challenge': 'https://w3id.org/security#challenge', 'created': { '@id': 'http://purl.org/dc/terms/created', '@type': 'http://www.w3.org/2001/XMLSchema#dateTime' }, 'domain': 'https://w3id.org/security#domain', 'expires': { '@id': 'https://w3id.org/security#expiration', '@type': 'http://www.w3.org/2001/XMLSchema#dateTime' }, 'nonce': 'https://w3id.org/security#nonce', 'proofPurpose': { '@id': 'https://w3id.org/security#proofPurpose', '@type': '@vocab', '@context': { '@protected': true, 'id': '@id', 'type': '@type', 'assertionMethod': { '@id': 'https://w3id.org/security#assertionMethod', '@type': '@id', '@container': '@set' }, 'authentication': { '@id': 'https://w3id.org/security#authenticationMethod', '@type': '@id', '@container': '@set' }, 'capabilityInvocation': { '@id': 'https://w3id.org/security#capabilityInvocationMethod', '@type': '@id', '@container': '@set' }, 'capabilityDelegation': { '@id': 'https://w3id.org/security#capabilityDelegationMethod', '@type': '@id', '@container': '@set' }, 'keyAgreement': { '@id': 'https://w3id.org/security#keyAgreementMethod', '@type': '@id', '@container': '@set' } } }, 'proofValue': { '@id': 'https://w3id.org/security#proofValue' }, 'verificationMethod': { '@id': 'https://w3id.org/security#verificationMethod', '@type': '@id' } } },
-          }
-        },
-        'https://w3id.org/security/v1': {
-          '@context': {
-            'id': '@id',
-            'type': '@type',
-            'dc': 'http://purl.org/dc/terms/',
-            'sec': 'https://w3id.org/security#',
-            'xsd': 'http://www.w3.org/2001/XMLSchema#',
-            'proof': { '@id': 'sec:proof', '@type': '@id', '@container': '@graph' },
-            'created': { '@id': 'dc:created', '@type': 'xsd:dateTime' },
-            'domain': 'sec:domain',
-            'challenge': 'sec:challenge',
-            'proofPurpose': { '@id': 'sec:proofPurpose', '@type': '@vocab' },
-            'proofValue': 'sec:proofValue',
-            'verificationMethod': { '@id': 'sec:verificationMethod', '@type': '@id' },
-          }
-        },
-        'https://w3id.org/security/v2': {
-          '@context': [
-            'https://w3id.org/security/v1',
-            { 'RsaSignature2018': 'https://w3id.org/security#RsaSignature2018' }
-          ]
-        },
-      };
+      const contextCache: Record<string, any> = {};
 
       const documentLoader = async (url: string) => {
-        if (CONTEXTS[url]) {
-          return { contextUrl: null, document: CONTEXTS[url], documentUrl: url };
+        console.log('[ShareVC] documentLoader fetching:', url);
+        if (contextCache[url]) {
+          console.log('[ShareVC] documentLoader cache hit:', url);
+          return { contextUrl: null, document: contextCache[url], documentUrl: url };
         }
-        // Fallback to network for unknown contexts
-        const res = await fetch(url, { headers: { Accept: 'application/ld+json' }, redirect: 'follow' });
-        const document = await res.json();
-        return { contextUrl: null, document, documentUrl: url };
+        try {
+          const res = await fetch(url, { headers: { Accept: 'application/ld+json' }, redirect: 'follow' });
+          console.log('[ShareVC] documentLoader response:', url, res.status);
+          const document = await res.json();
+          contextCache[url] = document;
+          return { contextUrl: null, document, documentUrl: url };
+        } catch (e: any) {
+          console.error('[ShareVC] documentLoader FETCH FAILED:', url, e.message);
+          throw e;
+        }
       };
       const canonizeOpts = { algorithm: 'URDNA2015', format: 'application/n-quads', documentLoader, safe: false };
 
       // VP body without VP proof
+      const vpId = `urn:uuid:${this.generateUUID()}`;
       const vpBody: any = {
-        '@context': ["https://www.w3.org/ns/credentials/v2", "https://w3id.org/security/suites/ed25519-2020/v1"],
+        '@context': ['https://www.w3.org/ns/credentials/v2'],
         type: ['VerifiablePresentation'],
         verifiableCredential: rawCredentials,
+        id: vpId,
+        holder: holderDID,
       };
 
-      const created = new Date().toISOString();
+      const created = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
       const proofOptions: any = {
         '@context': 'https://w3id.org/security/suites/ed25519-2020/v1',
         type: 'Ed25519Signature2020',
@@ -534,14 +467,63 @@ export class ShareVCService {
         proofPurpose: 'authentication',
       };
 
-      const [docNQuads, proofNQuads] = await Promise.all([
-        jsonld.canonize(vpBody, canonizeOpts),
-        jsonld.canonize(proofOptions, canonizeOpts),
-      ]);
+      // Use native URDNA2015 canonicalization (same as Java/titanium) when available
+      let signingInput: Buffer;
+      const URDNA2015 = NativeModules.URDNA2015;
 
-      const docHash = sha256(Buffer.from(docNQuads, 'utf8'));
-      const proofHash = sha256(Buffer.from(proofNQuads, 'utf8'));
-      const signingInput = Buffer.concat([Buffer.from(proofHash), Buffer.from(docHash)]);
+      if (Platform.OS !== 'web' && URDNA2015?.canonicalizeForSigning) {
+        console.log('[ShareVC] Using NATIVE canonicalization (titanium-compatible)');
+
+        // Build combined VP with proof
+        const combinedVp = {
+          '@context': ['https://www.w3.org/ns/credentials/v2'],
+          type: ['VerifiablePresentation'],
+          verifiableCredential: rawCredentials,
+          id: vpId,
+          holder: holderDID,
+          proof: {
+            type: 'Ed25519Signature2020',
+            created,
+            verificationMethod: holderDID,
+            domain: 'OpenID4VP',
+            challenge: authRequest.nonce,
+            proofPurpose: 'authentication',
+            proofValue: 'z_placeholder',
+          },
+        };
+
+        const combinedJson = JSON.stringify(combinedVp);
+        console.log('[ShareVC] Combined JSON length:', combinedJson.length);
+
+        const base64urlResult = await URDNA2015.canonicalizeForSigning(combinedJson);
+        // Decode base64url to Buffer (64 bytes: proofHash + docHash)
+        signingInput = Buffer.from(base64urlResult, 'base64');
+        console.log('[ShareVC] Native canonicalization result:', signingInput.length, 'bytes');
+      } else {
+        console.log('[ShareVC] Using JS canonicalization (jsonld lib fallback)');
+        let docNQuads: string;
+        let proofNQuads: string;
+        try {
+          console.log('[ShareVC] === Canonizing doc...');
+          docNQuads = await jsonld.canonize(vpBody, canonizeOpts);
+          console.log('[ShareVC] === Doc canonized, length:', docNQuads.length);
+        } catch (e: any) {
+          console.error('[ShareVC] === DOC CANONIZE FAILED:', e.message);
+          throw e;
+        }
+        try {
+          console.log('[ShareVC] === Canonizing proof...');
+          proofNQuads = await jsonld.canonize(proofOptions, canonizeOpts);
+          console.log('[ShareVC] === Proof canonized, length:', proofNQuads.length);
+        } catch (e: any) {
+          console.error('[ShareVC] === PROOF CANONIZE FAILED:', e.message);
+          throw e;
+        }
+
+        const docHash = sha256(Buffer.from(docNQuads, 'utf8'));
+        const proofHash = sha256(Buffer.from(proofNQuads, 'utf8'));
+        signingInput = Buffer.concat([Buffer.from(proofHash), Buffer.from(docHash)]);
+      }
 
       const signature = await ed.signAsync(signingInput, this.privateKey!);
       const proofValue = 'z' + bs58.encode(signature);
@@ -550,7 +532,6 @@ export class ShareVCService {
 
       const vp: VP = {
         ...vpBody,
-        id: `urn:uuid:${this.generateUUID()}`,
         proof: { ...proofWithoutContext, proofValue },
         _credentialMapping: credentialMapping as any,
       };

@@ -469,9 +469,8 @@ export class ShareVCService {
 
       // Use native URDNA2015 canonicalization (same as Java/titanium) when available
       let signingInput: Buffer;
-      const URDNA2015 = NativeModules.URDNA2015;
 
-      if (Platform.OS !== 'web' && URDNA2015?.canonicalizeForSigning) {
+      if (Platform.OS !== 'web' && NativeModules.URDNA2015?.canonicalizeForSigning) {
         console.log('[ShareVC] Using NATIVE canonicalization (titanium-compatible)');
 
         // Build combined VP with proof
@@ -495,7 +494,7 @@ export class ShareVCService {
         const combinedJson = JSON.stringify(combinedVp);
         console.log('[ShareVC] Combined JSON length:', combinedJson.length);
 
-        const base64urlResult = await URDNA2015.canonicalizeForSigning(combinedJson);
+        const base64urlResult = await NativeModules.URDNA2015.canonicalizeForSigning(combinedJson);
         // Decode base64url to Buffer (64 bytes: proofHash + docHash)
         signingInput = Buffer.from(base64urlResult, 'base64');
         console.log('[ShareVC] Native canonicalization result:', signingInput.length, 'bytes');

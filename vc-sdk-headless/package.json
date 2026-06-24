@@ -5,10 +5,17 @@
   "main": "./lib/module/index.js",
   "react-native": "./lib/module/index.js",
   "types": "./lib/typescript/index.d.ts",
+  "expo": {
+    "autolinking": {
+      "nativeModulesDir": "android"
+    }
+  },
+  "app-plugin": "./app.plugin.js",
   "files": [
     "src",
     "lib",
     "android",
+    "app.plugin.js",
     "!**/__tests__",
     "!**/__fixtures__",
     "!**/__mocks__",

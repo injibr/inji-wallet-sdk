@@ -398,7 +398,7 @@ export class ShareVCService {
       const rawCredentials = credentialMapping.map(({ vc }) => {
         const vcMeta = vc.metadata as any;
         const credential = vcMeta?.originalCredential ?? vcMeta?.originalResponse?.credential ?? {
-          '@context': vc['@context'] || ["https://www.w3.org/ns/credentials/v2", "https://w3id.org/security/suites/ed25519-2020/v1"],
+          '@context': vc['@context'],
           type: Array.isArray(vc.type) ? vc.type : [vc.type],
           issuer: vc.issuer || '',
           issuanceDate: vc.issuanceDate || new Date().toISOString(),
@@ -444,12 +444,17 @@ export class ShareVCService {
           throw e;
         }
       };
-      const canonizeOpts = { algorithm: 'URDNA2015', format: 'application/n-quads', documentLoader, safe: false };
+      const canonizeOpts = { algorithm: 'URDNA2015', format: 'application/n-quads', documentLoader };
 
       // VP body without VP proof
       const vpId = `urn:uuid:${this.generateUUID()}`;
+      const vpContexts = rawCredentials
+        .flatMap((c: any) => Array.isArray(c['@context']) ? c['@context'] : [c['@context']])
+        .filter(Boolean);
+      const vpContext: string[] = [...new Set(vpContexts)];
+
       const vpBody: any = {
-        '@context': ['https://www.w3.org/ns/credentials/v2'],
+        '@context': vpContext,
         type: ['VerifiablePresentation'],
         verifiableCredential: rawCredentials,
         id: vpId,
@@ -475,7 +480,7 @@ export class ShareVCService {
 
         // Build combined VP with proof
         const combinedVp = {
-          '@context': ['https://www.w3.org/ns/credentials/v2'],
+          '@context': vpContext,
           type: ['VerifiablePresentation'],
           verifiableCredential: rawCredentials,
           id: vpId,

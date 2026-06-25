@@ -565,11 +565,16 @@ export class CredentialService {
         credentialTypeId: credentialType.id
       });
 
+      const credentialContext: string[] | undefined = credentialType.fullConfig?.credential_definition?.['@context'];
+      if (!credentialContext || credentialContext.length === 0) {
+        throw new Error(`Missing @context in credential_definition for type: ${credentialType.id}. Check the issuer well-known config.`);
+      }
+
       const requestPayload = {
         format: 'ldp_vc',
         credential_definition: {
           type: credentialTypes,
-          '@context': ["https://www.w3.org/ns/credentials/v2", "https://w3id.org/security/suites/ed25519-2020/v1"]
+          '@context': credentialContext
         },
         proof: {
           proof_type: 'jwt',
@@ -722,7 +727,7 @@ export class CredentialService {
           // CRITICAL FIX: ALWAYS use the original proof from issuer (NEVER generate mock!)
           proof: receivedCredential.proof,  // ✅ Original cryptographic proof from issuer
           // CRITICAL: Preserve @context from issuer (required for W3C VC compliance)
-          '@context': receivedCredential['@context'] || ["https://www.w3.org/ns/credentials/v2", "https://w3id.org/security/suites/ed25519-2020/v1"],  // ✅ W3C context
+          '@context': receivedCredential['@context'] || credentialContext,
           metadata: {
             addedDate: new Date().toISOString(),
             lastAccessed: new Date().toISOString(),

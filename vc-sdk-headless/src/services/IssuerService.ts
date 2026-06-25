@@ -157,8 +157,8 @@ export class IssuerService extends EventEmitter3 {
             schema: config.credential_definition?.credentialSubject || {},
             fields: [],
             display: config.display?.[0] || {},
-            // Store the credential_definition.type array for use in credential processing
-            credentialDefinitionTypes: credentialDefinitionTypes
+            credentialDefinitionTypes: credentialDefinitionTypes,
+            fullConfig: config,
           };
         });
 
@@ -453,10 +453,7 @@ export class IssuerService extends EventEmitter3 {
 
       // Create issued credential
       const credential: VC = {
-        '@context': [
-          'https://www.w3.org/2018/credentials/v1',
-          'https://www.w3.org/2018/credentials/examples/v1'
-        ],
+        '@context': options.credentialData['@context'] || options.credentialType.fullConfig?.credential_definition?.['@context'],
         id: `urn:vc:${issuerId}:${Date.now()}`,
         type: ['VerifiableCredential', options.credentialType.name.replace(/\s+/g, '')],
         name: options.credentialType.name,

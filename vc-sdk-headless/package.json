@@ -28,7 +28,7 @@
     "lint": "eslint \"**/*.{js,ts,tsx}\"",
     "clean": "del-cli lib",
     "prepare": "bob build --target module",
-    "build": "bob build",
+    "build": "bob build --target module",
     "build:docs": "typedoc src --out docs/api"
   },
   "keywords": [

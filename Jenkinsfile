@@ -7,12 +7,12 @@ automata {
   type = 'CUSTOM'
   descriptor = 'package.json'
 
-  qa.sonarOpts = "-Dsonar.projectKey=${groupId} -Dsonar.projectVersion=${versao} -Dsonar.sources=src -Dsonar.exclusions=**/node_modules/**,**/lib/**,**/*.java,**/*.kt,**/*.class -Dsonar.java.binaries=. -Dsonar.findbugs.allowuncompiledcode=true"
+  qa.sonarOpts = "-Dsonar.projectKey=${groupId} -Dsonar.projectVersion=${version} -Dsonar.sources=src -Dsonar.exclusions=**/node_modules/**,**/lib/**,**/*.java,**/*.kt,**/*.class -Dsonar.java.binaries=. -Dsonar.findbugs.allowuncompiledcode=true"
   qa.encoding = 'UTF-8'
 
   notifications.add type: 'mail', condition: 'unstable, failure, promotion', to: 'alexandre.dekker@dataprev.gov.br'
 
-  artifacts.add([file: "${artifactId}-${versao}.tgz", descriptor: "groupId=${groupId},artifactId=${artifactId},version=${versao}"])
+  artifacts.add([file: "${artifactId}-${version}.tgz", descriptor: "groupId=${groupId},artifactId=${artifactId},version=${version}"])
 
   build.agent.image = env.CUSTOM_IMAGE
   build.agent.args = "--group-add 1002 -v /var/run/docker.sock:/var/run/docker.sock -e HOME=/tmp -e DOCKER_BUILDKIT=0"

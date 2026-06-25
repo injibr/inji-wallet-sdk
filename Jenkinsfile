@@ -1,12 +1,11 @@
 automata {
-  def versao = '1.0.0'
   // Parâmetros gerais
   def artifactId = 'wallet-sdk'
   def groupId = 'br.gov.dataprev.inji'
 
   // Parâmetros gerais
   type = 'CUSTOM'
-  descriptor = "groupId=${groupId},artifactId=${artifactId},version=${versao}"
+  descriptor = 'package.json'
 
   qa.sonarOpts = "-Dsonar.projectKey=${groupId} -Dsonar.projectVersion=${versao} -Dsonar.sources=src -Dsonar.exclusions=**/node_modules/**,**/lib/**,**/*.java,**/*.kt,**/*.class -Dsonar.java.binaries=. -Dsonar.findbugs.allowuncompiledcode=true"
   qa.encoding = 'UTF-8'

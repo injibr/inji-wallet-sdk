@@ -1,6 +1,6 @@
 {
   "name": "wallet-sdk",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Headless Verifiable Credentials SDK for React Native - Pure logic layer with event-based API (no UI components)",
   "main": "./lib/module/index.js",
   "react-native": "./lib/module/index.js",

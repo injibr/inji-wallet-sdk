@@ -200,21 +200,10 @@ export class ExpoCryptoAdapter implements ICryptoAdapter {
 
   /**
    * Load JOSE library dynamically
+   * jose is not available in React Native - always throws to trigger node-forge fallback
    */
   private async loadJose(): Promise<any> {
-    try {
-      // Try different import patterns
-      let jose;
-      try {
-        jose = require('jose');
-      } catch {
-        jose = await import('jose');
-      }
-
-      return jose;
-    } catch (error) {
-      throw new Error('JOSE library not available');
-    }
+    throw new Error('JOSE library not available in React Native');
   }
 
   /**

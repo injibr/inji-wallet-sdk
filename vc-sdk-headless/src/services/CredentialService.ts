@@ -11,9 +11,7 @@ import { StorageServicePlatform as StorageService } from './StorageService_Platf
 import { AuthService } from './AuthService';
 import { VCVerifier } from '../utils/crypto/VCVerifier';
 import { AuthIntegrationService } from './AuthIntegrationService';
-// Import jose functions with better error handling and React Native compatibility
-import * as jose from 'jose';
-const { SignJWT, generateKeyPair, exportJWK } = jose;
+// jose removed - JWT operations handled by NativeCryptoJWT module
 
 // React Native compatibility imports
 import { Buffer } from 'buffer';
@@ -542,10 +540,7 @@ export class CredentialService {
       const vcId = this.uid.rnd();
 
       // Extract credential endpoint from issuer
-      const credentialEndpoint = issuer.issuerUrl || issuer.id;
-      const fullCredentialEndpoint = credentialEndpoint.includes('/credential')
-        ? credentialEndpoint
-        : `${credentialEndpoint}/credential`;
+      const fullCredentialEndpoint = issuer.credential_endpoint || issuer.issuerUrl + '/v1/certify/issuance/credential';
 
       progressCallback?.('Getting access token...');
 
@@ -570,11 +565,16 @@ export class CredentialService {
         credentialTypeId: credentialType.id
       });
 
+      const credentialContext: string[] | undefined = credentialType.fullConfig?.credential_definition?.['@context'];
+      if (!credentialContext || credentialContext.length === 0) {
+        throw new Error(`Missing @context in credential_definition for type: ${credentialType.id}. Check the issuer well-known config.`);
+      }
+
       const requestPayload = {
         format: 'ldp_vc',
         credential_definition: {
           type: credentialTypes,
-          '@context': ['https://www.w3.org/2018/credentials/v1']
+          '@context': credentialContext
         },
         proof: {
           proof_type: 'jwt',
@@ -727,7 +727,7 @@ export class CredentialService {
           // CRITICAL FIX: ALWAYS use the original proof from issuer (NEVER generate mock!)
           proof: receivedCredential.proof,  // ✅ Original cryptographic proof from issuer
           // CRITICAL: Preserve @context from issuer (required for W3C VC compliance)
-          '@context': receivedCredential['@context'] || ['https://www.w3.org/2018/credentials/v1'],  // ✅ W3C context
+          '@context': receivedCredential['@context'] || credentialContext,
           metadata: {
             addedDate: new Date().toISOString(),
             lastAccessed: new Date().toISOString(),

@@ -20,7 +20,7 @@ automata {
 
   build.script = {
     docker.withRegistry('https://registry.ctn.prevnet', 'harbor') {
-      docker.image('redhat/nodejs-10:1-95').inside('-e NPM_CONFIG_PREFIX=/tmp -e HOME=/tmp -e NODE_TLS_REJECT_UNAUTHORIZED=0') {
+      docker.image('redhat/nodejs-18:9.5-1737531284').inside('-e NPM_CONFIG_PREFIX=/tmp -e HOME=/tmp -e NODE_TLS_REJECT_UNAUTHORIZED=0') {
             sh '''\
             npm set strict-ssl false && \
             git config --global http.sslverify false && \

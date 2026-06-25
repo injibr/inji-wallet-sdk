@@ -8,7 +8,7 @@ automata {
   type = 'CUSTOM'
   descriptor = "groupId=${groupId},artifactId=${artifactId},version=${versao}"
 
-  qa.sonarOpts = "-Dsonar.projectKey=${groupId} -Dsonar.projectVersion=${versao} -Dsonar.sources=."
+  qa.sonarOpts = "-Dsonar.projectKey=${groupId} -Dsonar.projectVersion=${versao} -Dsonar.sources=src -Dsonar.exclusions=**/node_modules/**,**/lib/**,**/*.java,**/*.kt,**/*.class -Dsonar.java.binaries=. -Dsonar.findbugs.allowuncompiledcode=true"
   qa.encoding = 'UTF-8'
 
   notifications.add type: 'mail', condition: 'unstable, failure, promotion', to: 'alexandre.dekker@dataprev.gov.br'

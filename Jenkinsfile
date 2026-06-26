@@ -12,7 +12,9 @@ automata {
 
   notifications.add type: 'mail', condition: 'unstable, failure, promotion', to: 'alexandre.dekker@dataprev.gov.br'
 
-  artifacts.add([file: "${artifactId}-${version}.tgz", descriptor: "groupId=${groupId},artifactId=${artifactId},version=${version}"])
+  //artifacts.add([file: , descriptor: "groupId=${groupId},artifactId=${artifactId},version=${version}"])
+  artifacts.add descriptor: 'groupId=$groupId,artifactId=$artifactId,version=$version', file: '${artifactId}-${version}.tgz'
+
 
   build.agent.image = env.CUSTOM_IMAGE
   build.agent.args = "--group-add 1002 -v /var/run/docker.sock:/var/run/docker.sock -e HOME=/tmp -e DOCKER_BUILDKIT=0"

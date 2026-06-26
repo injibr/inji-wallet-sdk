@@ -7,8 +7,8 @@ automata {
   type = 'CUSTOM'
   descriptor = 'package.json'
 
-  qa.sonarOpts = "-Dsonar.projectKey=${groupId} -Dsonar.projectVersion=${version} -Dsonar.sources=src -Dsonar.exclusions=**/node_modules/**,**/lib/**,**/*.java,**/*.kt,**/*.class -Dsonar.java.binaries=. -Dsonar.findbugs.allowuncompiledcode=true"
-  qa.encoding = 'UTF-8'
+  //qa.sonarOpts = "-Dsonar.projectKey=${groupId} -Dsonar.projectVersion=${version} -Dsonar.sources=src -Dsonar.exclusions=**/node_modules/**,**/lib/**,**/*.java,**/*.kt,**/*.class -Dsonar.java.binaries=. -Dsonar.findbugs.allowuncompiledcode=true"
+  //qa.encoding = 'UTF-8'
 
   notifications.add type: 'mail', condition: 'unstable, failure, promotion', to: 'alexandre.dekker@dataprev.gov.br'
 

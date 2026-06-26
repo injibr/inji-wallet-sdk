@@ -10,11 +10,12 @@ export class ExpoNetworkAdapter implements INetworkAdapter {
 
   async initialize(): Promise<void> {
     try {
-      this.Network = require('expo-network');
+      const mod = require('expo-network');
+      this.Network = mod?.default ?? mod;
       console.log('[ExpoNetworkAdapter] Initialized with Expo Network');
-    } catch (error) {
-      console.error('[ExpoNetworkAdapter] Failed to initialize:', error);
-      throw new Error('expo-network is required for network operations in Expo');
+    } catch (_) {
+      this.Network = null;
+      console.warn('[ExpoNetworkAdapter] expo-network not available, network features disabled');
     }
   }
 

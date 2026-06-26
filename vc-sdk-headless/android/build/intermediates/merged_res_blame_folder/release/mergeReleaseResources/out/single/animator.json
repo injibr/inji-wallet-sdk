@@ -1,0 +1,26 @@
+[
+    {
+        "merged": "com.vcsdkheadless.vc-sdk-headless-release-27:/animator/fragment_fade_enter.xml",
+        "source": "com.vcsdkheadless.vc-sdk-headless-fragment-1.5.4-6:/animator/fragment_fade_enter.xml"
+    },
+    {
+        "merged": "com.vcsdkheadless.vc-sdk-headless-release-27:/animator/fragment_close_exit.xml",
+        "source": "com.vcsdkheadless.vc-sdk-headless-fragment-1.5.4-6:/animator/fragment_close_exit.xml"
+    },
+    {
+        "merged": "com.vcsdkheadless.vc-sdk-headless-release-27:/animator/fragment_open_exit.xml",
+        "source": "com.vcsdkheadless.vc-sdk-headless-fragment-1.5.4-6:/animator/fragment_open_exit.xml"
+    },
+    {
+        "merged": "com.vcsdkheadless.vc-sdk-headless-release-27:/animator/fragment_open_enter.xml",
+        "source": "com.vcsdkheadless.vc-sdk-headless-fragment-1.5.4-6:/animator/fragment_open_enter.xml"
+    },
+    {
+        "merged": "com.vcsdkheadless.vc-sdk-headless-release-27:/animator/fragment_close_enter.xml",
+        "source": "com.vcsdkheadless.vc-sdk-headless-fragment-1.5.4-6:/animator/fragment_close_enter.xml"
+    },
+    {
+        "merged": "com.vcsdkheadless.vc-sdk-headless-release-27:/animator/fragment_fade_exit.xml",
+        "source": "com.vcsdkheadless.vc-sdk-headless-fragment-1.5.4-6:/animator/fragment_fade_exit.xml"
+    }
+]

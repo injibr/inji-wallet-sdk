@@ -1,0 +1,10 @@
+[
+    {
+        "merged": "com.vcsdkheadless.vc-sdk-headless-release-27:/layout-watch-v20/abc_alert_dialog_title_material.xml",
+        "source": "com.vcsdkheadless.vc-sdk-headless-appcompat-1.7.0-1:/layout-watch-v20/abc_alert_dialog_title_material.xml"
+    },
+    {
+        "merged": "com.vcsdkheadless.vc-sdk-headless-release-27:/layout-watch-v20/abc_alert_dialog_button_bar_material.xml",
+        "source": "com.vcsdkheadless.vc-sdk-headless-appcompat-1.7.0-1:/layout-watch-v20/abc_alert_dialog_button_bar_material.xml"
+    }
+]

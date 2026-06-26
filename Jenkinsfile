@@ -13,7 +13,7 @@ automata {
   notifications.add type: 'mail', condition: 'unstable, failure, promotion', to: 'alexandre.dekker@dataprev.gov.br'
 
   //artifacts.add([file: , descriptor: "groupId=${groupId},artifactId=${artifactId},version=${version}"])
-  artifacts.add descriptor: 'groupId=$groupId,artifactId=$artifactId,version=$version', file: '${artifactId}-${version}.tgz'
+  artifacts.add descriptor: 'groupId=$groupId,artifactId=$artifactId,version=$version', file: '$artifactId-$version.tgz'
 
 
   build.agent.image = env.CUSTOM_IMAGE

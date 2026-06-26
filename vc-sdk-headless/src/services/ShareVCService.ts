@@ -427,23 +427,32 @@ export class ShareVCService {
 
       const contextCache: Record<string, any> = {};
 
+      const fetchAndCache = async (url: string): Promise<any> => {
+        if (contextCache[url]) return contextCache[url];
+        const res = await fetch(url, { headers: { Accept: 'application/ld+json, application/json' }, redirect: 'follow' });
+        if (!res.ok) throw new Error(`HTTP ${res.status} fetching context: ${url}`);
+        const doc = await res.json();
+        contextCache[url] = doc;
+        const nested: string[] = [];
+        const rawCtx = doc['@context'];
+        if (typeof rawCtx === 'string' && rawCtx.startsWith('http')) nested.push(rawCtx);
+        else if (Array.isArray(rawCtx)) rawCtx.forEach((c: any) => { if (typeof c === 'string' && c.startsWith('http')) nested.push(c); });
+        await Promise.all(nested.filter(u => !contextCache[u]).map(fetchAndCache));
+        return doc;
+      };
+
       const documentLoader = async (url: string) => {
-        console.log('[ShareVC] documentLoader fetching:', url);
-        if (contextCache[url]) {
-          console.log('[ShareVC] documentLoader cache hit:', url);
-          return { contextUrl: null, document: contextCache[url], documentUrl: url };
-        }
         try {
-          const res = await fetch(url, { headers: { Accept: 'application/ld+json' }, redirect: 'follow' });
-          console.log('[ShareVC] documentLoader response:', url, res.status);
-          const document = await res.json();
-          contextCache[url] = document;
+          const document = await fetchAndCache(url);
           return { contextUrl: null, document, documentUrl: url };
         } catch (e: any) {
           console.error('[ShareVC] documentLoader FETCH FAILED:', url, e.message);
           throw e;
         }
       };
+
+      jsonld.documentLoader = documentLoader;
+
       const canonizeOpts = { algorithm: 'URDNA2015', format: 'application/n-quads', documentLoader };
 
       // VP body without VP proof
@@ -471,6 +480,15 @@ export class ShareVCService {
         verificationMethod: holderDID,
         proofPurpose: 'authentication',
       };
+
+      const allContextUrls = [
+        ...vpContext,
+        proofOptions['@context'],
+        ...rawCredentials.flatMap((c: any) =>
+          Array.isArray(c['@context']) ? c['@context'] : [c['@context']]
+        ),
+      ].filter((u): u is string => typeof u === 'string' && u.startsWith('http'));
+      await Promise.all([...new Set(allContextUrls)].map(fetchAndCache));
 
       // Use native URDNA2015 canonicalization (same as Java/titanium) when available
       let signingInput: Buffer;

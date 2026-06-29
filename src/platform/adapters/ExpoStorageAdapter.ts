@@ -16,10 +16,12 @@ export class ExpoStorageAdapter implements IStorageAdapter {
 
   async initialize(): Promise<void> {
     try {
-      // Import SecureStore dynamically
-      this.SecureStore = require('expo-secure-store');
+      const mod = require('expo-secure-store');
+      this.SecureStore = mod?.default ?? mod;
+      if (!this.SecureStore?.setItemAsync) throw new Error('SecureStore API not available');
       console.log('[ExpoStorageAdapter] Initialized with SecureStore support');
     } catch (error) {
+      this.SecureStore = null;
       console.warn('[ExpoStorageAdapter] SecureStore not available, using AsyncStorage only:', error);
     }
   }
@@ -230,7 +232,8 @@ export class ExpoStorageAdapter implements IStorageAdapter {
    */
   private async generateRandomKey(): Promise<string> {
     try {
-      const Crypto = require('expo-crypto');
+      const mod = require('expo-crypto');
+      const Crypto = mod?.default ?? mod;
       const bytes = await Crypto.getRandomBytesAsync(32);
       return Array.from(bytes, (byte: number) => byte.toString(16).padStart(2, '0')).join('');
     } catch (error) {

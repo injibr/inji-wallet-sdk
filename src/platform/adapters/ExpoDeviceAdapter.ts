@@ -11,13 +11,18 @@ export class ExpoDeviceAdapter implements IDeviceAdapter {
 
   async initialize(): Promise<void> {
     try {
-      this.Device = require('expo-device');
-      this.Constants = require('expo-constants').default;
-      console.log('[ExpoDeviceAdapter] Initialized with Expo Device and Constants');
-    } catch (error) {
-      console.error('[ExpoDeviceAdapter] Failed to initialize:', error);
-      throw new Error('expo-device and expo-constants are required for device info in Expo');
+      const deviceMod = require('expo-device');
+      this.Device = deviceMod?.default ?? deviceMod;
+    } catch (_) {
+      this.Device = null;
     }
+    try {
+      const constMod = require('expo-constants');
+      this.Constants = constMod?.default ?? constMod;
+    } catch (_) {
+      this.Constants = null;
+    }
+    console.log('[ExpoDeviceAdapter] Initialized');
   }
 
   async getDeviceId(): Promise<string> {

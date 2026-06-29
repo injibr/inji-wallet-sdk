@@ -34,49 +34,32 @@ export class PlatformDetector {
    * Detect the current platform type
    */
   static detectPlatform(): PlatformType {
-    try {
-      // Check for Expo constants first
-      const Constants = require('expo-constants').default;
-      return 'expo';
-    } catch {
-      // Check for web environment
-      if (typeof window !== 'undefined' && window.navigator) {
-        return 'web';
-      }
-      // Default to native React Native
-      return 'native';
+    // Check for web environment
+    if (typeof window !== 'undefined' && window.navigator) {
+      return 'web';
     }
+    try {
+      const mod = require('expo-modules-core');
+      const core = mod?.default ?? mod;
+      if (core && typeof core === 'object') return 'expo';
+    } catch {
+      // not expo
+    }
+    return 'native';
   }
 
   /**
    * Check if running in Expo Go app
    */
   static isExpoGo(): boolean {
-    try {
-      const Constants = require('expo-constants').default;
-      return (
-        Constants.executionEnvironment === 'storeClient' ||
-        Constants.appOwnership === 'expo'
-      );
-    } catch {
-      return false;
-    }
+    return false;
   }
 
   /**
    * Check if running in Expo managed workflow
    */
   static isExpoManaged(): boolean {
-    try {
-      const Constants = require('expo-constants').default;
-      return (
-        Constants.executionEnvironment === 'standalone' ||
-        Constants.executionEnvironment === 'storeClient' ||
-        this.isExpoGo()
-      );
-    } catch {
-      return false;
-    }
+    return false;
   }
 
   /**
@@ -132,25 +115,27 @@ export class PlatformDetector {
    */
   private static hasModule(moduleName: string): boolean {
     try {
+      let mod: any;
       switch (moduleName) {
         case 'expo-secure-store':
-          require('expo-secure-store');
-          return true;
+          mod = require('expo-secure-store');
+          break;
         case 'expo-local-authentication':
-          require('expo-local-authentication');
-          return true;
+          mod = require('expo-local-authentication');
+          break;
         case 'expo-file-system':
-          require('expo-file-system');
-          return true;
+          mod = require('expo-file-system');
+          break;
         case 'react-native-keychain':
-          require('react-native-keychain');
-          return true;
+          mod = require('react-native-keychain');
+          break;
         case 'react-native-fs':
-          require('react-native-fs');
-          return true;
+          mod = require('react-native-fs');
+          break;
         default:
           return false;
       }
+      return mod != null && (mod.default ?? mod) != null;
     } catch {
       return false;
     }
@@ -163,7 +148,9 @@ export class PlatformDetector {
     const info = this.getPlatformInfo();
 
     try {
-      const Constants = require('expo-constants').default;
+      const mod = require('expo-constants');
+      const Constants = mod?.default ?? mod;
+      if (!Constants) throw new Error('expo-constants not available');
       return {
         ...info,
         expoVersion: Constants.expoVersion,

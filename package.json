@@ -1,6 +1,6 @@
 {
   "name": "@br.gov.dataprev.inji/wallet-sdk",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Headless Verifiable Credentials SDK for React Native - Pure logic layer with event-based API (no UI components)",
   "main": "./lib/module/index.js",
   "react-native": "./lib/module/index.js",

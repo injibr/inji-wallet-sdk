@@ -1,6 +1,6 @@
 {
-  "name": "vc-sdk-headless",
-  "version": "1.0.0",
+  "name": "@br.gov.dataprev.inji/wallet-sdk",
+  "version": "1.0.1",
   "description": "Headless Verifiable Credentials SDK for React Native - Pure logic layer with event-based API (no UI components)",
   "main": "./lib/module/index.js",
   "react-native": "./lib/module/index.js",
@@ -94,7 +94,7 @@
     "eslint": "^9.35.0",
     "jest": "^29.7.0",
     "prettier": "^3.6.2",
-    "react-native-builder-bob": "^0.40.13",
+    "react-native-builder-bob": "^0.35.0",
     "typescript": "^5.9.2"
   },
   "jest": {

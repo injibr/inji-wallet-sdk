@@ -17,6 +17,7 @@ import * as ed from '@noble/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
 import bs58 from 'bs58';
 import { NativeModules, Platform } from 'react-native';
+import '../polyfills';
 
 // OpenID4VP Types
 export interface PresentationDefinition {

@@ -48,6 +48,7 @@ export interface FieldConstraint {
 
 export interface AuthorizationRequest {
   client_id: string;
+  domain: string;
   redirect_uri: string;
   response_type: string;
   scope?: string;
@@ -477,7 +478,7 @@ export class ShareVCService {
         type: 'Ed25519Signature2020',
         created,
         challenge: authRequest.nonce,
-        domain: 'OpenID4VP',
+        domain: authRequest.domain || authRequest.client_id,
         verificationMethod: holderDID,
         proofPurpose: 'authentication',
       };
@@ -508,7 +509,7 @@ export class ShareVCService {
             type: 'Ed25519Signature2020',
             created,
             verificationMethod: holderDID,
-            domain: 'OpenID4VP',
+            domain: authRequest.domain || authRequest.client_id,
             challenge: authRequest.nonce,
             proofPurpose: 'authentication',
             proofValue: 'z_placeholder',

@@ -1,7 +1,11 @@
 module.exports = {
   dependency: {
     platforms: {
-      android: null,
+      android: {
+        sourceDir: './android',
+        packageImportPath: 'import com.vcsdkheadless.VcSdkHeadlessPackage;',
+        packageInstance: 'new VcSdkHeadlessPackage()',
+      },
       ios: null,
     },
   },

@@ -349,76 +349,11 @@ export class NativeCryptoJWT {
 
   // Main method to create JWT with native keystore detection
   async createJWT(payload, options = {}) {
-    console.log('[NATIVE_CRYPTO_JWT] Creating JWT with native keystore detection...');
-
+    console.log('[NATIVE_CRYPTO_JWT] Creating JWT (ES256/P-256)...');
     try {
-      // Try to detect native modules
-      let NativeModules;
-      let RNSecureKeystoreModule = null;
-      let hasNativeKeystore = false;
-
-      try {
-        const RN = require('react-native');
-        NativeModules = RN.NativeModules;
-
-        console.log('[NATIVE_CRYPTO_JWT] 🔍 Checking for native modules...');
-        console.log('[NATIVE_CRYPTO_JWT] Available modules:', Object.keys(NativeModules || {}));
-
-        // Check for RNSecureKeystoreModule (INJI's keystore)
-        if (NativeModules?.RNSecureKeystoreModule) {
-          RNSecureKeystoreModule = NativeModules.RNSecureKeystoreModule;
-          hasNativeKeystore = true;
-          console.log('[NATIVE_CRYPTO_JWT] ✅ Found RNSecureKeystoreModule (INJI keystore)');
-        }
-      } catch (moduleError) {
-        console.log('[NATIVE_CRYPTO_JWT] ⚠️ React Native modules not accessible:', moduleError.message);
-      }
-
-      // Ensure RSA JWT payload structure [sub, aud, iss, exp, nonce, iat]
-      const rsaPayload = {
-        sub: payload.sub || payload.iss, // Use sub field as in RSA example
-        aud: payload.aud,
-        iss: payload.iss,
-        exp: payload.exp,
-        nonce: payload.nonce || null, // Include nonce field (can be null)
-        iat: payload.iat
-      };
-
-      console.log('[NATIVE_CRYPTO_JWT] ✅ RSA JWT payload structure:', JSON.stringify(rsaPayload, null, 2));
-
-      // Use INJI's approach with native keystore if available
-      if (hasNativeKeystore && RNSecureKeystoreModule) {
-        console.log('[NATIVE_CRYPTO_JWT] 🎯 Using INJI native keystore for real crypto signatures...');
-
-        try {
-          const jwt = await this.createJWTWithNativeKeystore(
-            rsaPayload,
-            RNSecureKeystoreModule,
-            options.keyType || 'RS256'
-          );
-
-          console.log('[NATIVE_CRYPTO_JWT] ✅ RSA NATIVE CRYPTO JWT GENERATED!');
-          console.log('[NATIVE_CRYPTO_JWT] Algorithm: RS256 with real signature');
-          console.log('[NATIVE_CRYPTO_JWT] JWT length:', jwt.length);
-          console.log('[NATIVE_CRYPTO_JWT] 🔍 Generated JWT:', jwt);
-
-          return jwt;
-        } catch (keystoreError) {
-          console.error('[NATIVE_CRYPTO_JWT] ❌ Native keystore failed:', keystoreError.message);
-          // Fall through to fallback
-        }
-      }
-
-      // Fallback to node-forge pure JavaScript RSA
-      console.log('[NATIVE_CRYPTO_JWT] ⚠️ Native modules not available, using node-forge fallback...');
-      const jwt = await this.createNodeForgeJWT(rsaPayload);
-
-      console.log('[NATIVE_CRYPTO_JWT] ✅ FALLBACK JWT GENERATED');
-      console.log('[NATIVE_CRYPTO_JWT] JWT length:', jwt.length);
-      console.log('[NATIVE_CRYPTO_JWT] 🔍 Generated JWT:', jwt);
-
+      const jwt = await this.createNodeForgeJWT(payload);
+      console.log('[NATIVE_CRYPTO_JWT] ✅ JWT created, length:', jwt.length);
       return jwt;
-
     } catch (error) {
       console.error('[NATIVE_CRYPTO_JWT] ❌ JWT creation failed:', error.message);
       throw error;
@@ -534,216 +469,75 @@ export class NativeCryptoJWT {
     }
   }
 
-  // Node-forge pure JavaScript RSA implementation for React Native with key reuse
+  // EC P-256 / ES256 JWT implementation using elliptic
   async createNodeForgeJWT(payload) {
-    console.log('[DEBUG] 🚨 createNodeForgeJWT method called!');
-    console.log('[DEBUG] Payload received:', JSON.stringify(payload, null, 2));
-    console.log('[NATIVE_CRYPTO_JWT] 🔨 Using node-forge pure JavaScript RSA implementation...');
-    console.log('\n🔍 [JWT_GENERATION_LOG] ======= DETAILED JWT CREATION PROCESS =======');
-
-    try {
+    console.log('[NATIVE_CRYPTO_JWT] Creating ES256/P-256 JWT with elliptic...');
+    const { Buffer } = require('buffer');
+    const EC = require('elliptic').ec;
+    const ec = new EC('p256');
+    const CACHE_KEY = 'EC_P256_KeyPair';
+    let keyPair, pubJwk;
+    const stored = await this._loadStoredKey(CACHE_KEY);
+    if (stored) {
+      keyPair = ec.keyFromPrivate(stored.privateKeyHex, 'hex');
+      pubJwk = stored.pubJwk;
+      console.log('[NATIVE_CRYPTO_JWT] Reusing stored EC P-256 key');
+    } else {
+      console.log('[NATIVE_CRYPTO_JWT] Generating EC P-256 key pair...');
       let forge;
-      try {
-        // Try dynamic import first (ES modules)
-        const forgeModule = await import('node-forge');
-        forge = forgeModule.default || forgeModule;
-        console.log('[NATIVE_CRYPTO_JWT] ✅ node-forge loaded via dynamic import!');
-      } catch (importError) {
-        try {
-          // Fallback to require (CommonJS)
-          forge = require('node-forge');
-          console.log('[NATIVE_CRYPTO_JWT] ✅ node-forge loaded via require!');
-        } catch (requireError) {
-          throw new Error(`Failed to load node-forge: import failed (${importError.message}), require failed (${requireError.message})`);
-        }
-      }
-
-      // 🔑 STEP 1: Check for existing keys first (INJI approach)
-      console.log('🔍 [KEY_MANAGEMENT] Checking for existing RSA keys...');
-      const hasKeys = await this.hasExistingKeys();
-
-      let privateKey, publicKey, pubJwk;
-
-      if (hasKeys) {
-        console.log('✅ [KEY_MANAGEMENT] Found existing RSA keys - reusing them (like INJI)');
-        const existingKeys = await this.getExistingKeys();
-
-        if (existingKeys && existingKeys.privateKey && existingKeys.publicKey && existingKeys.publicJwk) {
-          // Reconstruct forge key objects from stored data
-          privateKey = forge.pki.privateKeyFromPem(existingKeys.privateKey);
-          // publicKey = forge.pki.publicKeyFromPem(existingKeys.publicKey); // Not needed for JWT
-          pubJwk = existingKeys.publicJwk;
-
-          console.log('🔑 [KEY_MANAGEMENT] Successfully restored existing 2048-bit RSA key pair');
-          console.log(`📅 [KEY_MANAGEMENT] Keys created: ${existingKeys.createdAt}`);
-          console.log(`🔒 [KEY_MANAGEMENT] Key size: ${existingKeys.keySize} bits`);
-          console.log(`🔑 [KEY_MANAGEMENT] Algorithm: ${existingKeys.algorithm}`);
-
-          // Skip key generation entirely
-        } else {
-          console.log('⚠️  [KEY_MANAGEMENT] Existing keys found but invalid - regenerating');
-          hasKeys = false; // Force regeneration
-        }
-      }
-
-      if (!hasKeys) {
-        console.log('🔄 [KEY_MANAGEMENT] No existing keys found - generating new 2048-bit RSA key pair');
-        console.log('⚠️  [KEY_MANAGEMENT] This is a ONE-TIME operation - keys will be reused for all future credentials');
-
-        console.log('🔒 [JWT_GENERATION_LOG] Server requires 2048-bit RSA keys');
-        console.log('⚠️  [JWT_GENERATION_LOG] Key generation starting... this may take 30-60 seconds in React Native');
-        console.log('⏳ [JWT_GENERATION_LOG] Please wait... generating strong cryptographic keys');
-
-        try {
-          // Use non-blocking approach with setImmediate for React Native
-          const keyGenPromise = new Promise((resolve, reject) => {
-            // Use setImmediate to prevent UI blocking
-            setImmediate(() => {
-              try {
-                console.log('🔄 [JWT_GENERATION_LOG] Starting 2048-bit RSA key generation...');
-                const startTime = Date.now();
-
-                // Generate 2048-bit RSA keys as required by server
-                const keyPair = forge.pki.rsa.generateKeyPair({
-                  bits: 2048,
-                  workers: -1,  // Use main thread (workers don't work in RN)
-                  workerScript: null,
-                  // Use faster key generation options
-                  e: 0x10001  // Use standard exponent for speed
-                });
-
-                const endTime = Date.now();
-                console.log(`⏱️  [JWT_GENERATION_LOG] 2048-bit key generation completed in ${endTime - startTime}ms`);
-                resolve(keyPair);
-              } catch (error) {
-                console.error('🚨 [JWT_GENERATION_LOG] 2048-bit key generation error:', error);
-                reject(error);
-              }
-            });
-          });
-
-          // 60 second timeout for 2048-bit keys in React Native
-          const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => {
-              reject(new Error('2048-bit RSA key generation timeout after 60 seconds - trying fallback'));
-            }, 60000);
-          });
-
-          console.log('⏳ [JWT_GENERATION_LOG] Waiting for 2048-bit key generation (max 60 seconds)...');
-          const result = await Promise.race([keyGenPromise, timeoutPromise]);
-          privateKey = result.privateKey;
-          publicKey = result.publicKey;
-
-          console.log('✅ [JWT_GENERATION_LOG] 2048-bit RSA key pair generated successfully!');
-          console.log('🔒 [JWT_GENERATION_LOG] Server-compatible key size: 2048 bits');
-
-          // Export public key as JWK - EXACTLY match JOSE format
-          // Get the modulus as raw bytes (not hex string)
-          let nHex = publicKey.n.toString(16);
-          // Ensure even length
-          if (nHex.length % 2 !== 0) {
-            nHex = '0' + nHex;
-          }
-          // Convert hex to binary bytes
-          const nBytes = forge.util.hexToBytes(nHex);
-
-          // Create JWK with EXACT field order and fields as JOSE
-          pubJwk = {
-            kty: 'RSA',                                    // JOSE field order: kty first
-            n: forge.util.encode64(nBytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, ''), // Direct base64 to base64url
-            e: 'AQAB',                                     // exponent
-            use: 'sig',                                    // MISSING: usage field
-            alg: 'RS256'                                   // MISSING: algorithm field
-          };
-
-          // 🔑 STEP 2: Store keys for future reuse (INJI approach)
-          const privateKeyPem = forge.pki.privateKeyToPem(privateKey);
-          const publicKeyPem = forge.pki.publicKeyToPem(publicKey);
-          await this.storeKeys(privateKeyPem, publicKeyPem, pubJwk);
-          console.log('💾 [KEY_MANAGEMENT] Keys stored for future reuse - next credentials will be instant!');
-
-        } catch (keyGenError) {
-          console.error('❌ [JWT_GENERATION_LOG] 2048-bit RSA generation failed:', keyGenError.message);
-          console.log('🔄 [JWT_GENERATION_LOG] Trying JOSE library as fallback (also 2048-bit)...');
-
-          throw new Error(`Server requires 2048-bit RSA keys but generation failed: ${keyGenError.message}`);
-        }
-      }
-
-      console.log('📋 [JWT_GENERATION_LOG] JWK CREATED:');
-      console.log(`   - kty: ${pubJwk.kty}`);
-      console.log(`   - n length: ${pubJwk.n.length} chars`);
-      console.log(`   - n first 50 chars: ${pubJwk.n.substring(0, 50)}...`);
-      console.log(`   - e: ${pubJwk.e}`);
-      console.log(`   - use: ${pubJwk.use}`);
-      console.log(`   - alg: ${pubJwk.alg}`);
-
-      // Create header
-      const header = {
-        typ: 'openid4vci-proof+jwt',
-        alg: 'RS256',
-        jwk: pubJwk
+      try { const m = await import('node-forge'); forge = m.default || m; }
+      catch { forge = require('node-forge'); }
+      const randomBytes = forge.random.getBytesSync(32);
+      const privHex = Buffer.from(randomBytes, 'binary').toString('hex');
+      keyPair = ec.keyFromPrivate(privHex, 'hex');
+      const pub = keyPair.getPublic();
+      const xHex = pub.getX().toString('hex').padStart(64, '0');
+      const yHex = pub.getY().toString('hex').padStart(64, '0');
+      pubJwk = {
+        kty: 'EC',
+        crv: 'P-256',
+        x: Buffer.from(xHex, 'hex').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,''),
+        y: Buffer.from(yHex, 'hex').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,''),
       };
-
-      console.log('📋 [JWT_GENERATION_LOG] HEADER CREATED:');
-      console.log(`   - typ: ${header.typ}`);
-      console.log(`   - alg: ${header.alg}`);
-      console.log(`   - jwk fields: ${Object.keys(header.jwk).join(', ')}`);
-
-      console.log('📋 [JWT_GENERATION_LOG] PAYLOAD TO SIGN:');
-      console.log(`   - sub: ${payload.sub}`);
-      console.log(`   - aud: ${payload.aud}`);
-      console.log(`   - iss: ${payload.iss}`);
-      console.log(`   - exp: ${payload.exp}`);
-      console.log(`   - nonce: ${payload.nonce}`);
-      console.log(`   - iat: ${payload.iat}`);
-
-      // Encode header and payload
-      const header64 = this.base64UrlEncode(JSON.stringify(header));
-      const payload64 = this.base64UrlEncode(JSON.stringify(payload));
-      const signingInput = `${header64}.${payload64}`;
-
-      console.log('📋 [JWT_GENERATION_LOG] BASE64URL ENCODING:');
-      console.log(`   - Header base64url length: ${header64.length} chars`);
-      console.log(`   - Payload base64url length: ${payload64.length} chars`);
-      console.log(`   - Signing input: ${signingInput.substring(0, 100)}...`);
-
-      console.log('[NATIVE_CRYPTO_JWT] Creating RSA signature with node-forge...');
-
-      // Create signature using node-forge
-      const md = forge.md.sha256.create();
-      md.update(signingInput, 'utf8');
-      const signature = privateKey.sign(md);
-      // Fix: signature is already binary, convert directly to base64url
-      const signature64 = forge.util.encode64(signature).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-
-      console.log('📋 [JWT_GENERATION_LOG] SIGNATURE CREATED:');
-      console.log(`   - Binary signature length: ${signature.length} bytes`);
-      console.log(`   - Base64url signature length: ${signature64.length} chars`);
-      console.log(`   - Signature first 50 chars: ${signature64.substring(0, 50)}...`);
-      console.log(`   - Signature last 50 chars: ...${signature64.substring(signature64.length - 50)}`);
-
-      // Construct final JWT
-      const jwt = `${signingInput}.${signature64}`;
-
-      console.log('\n🎯 [JWT_GENERATION_LOG] ======= FINAL JWT DETAILS =======');
-      console.log(`✅ JWT Total Length: ${jwt.length} characters`);
-      console.log(`✅ JWT Format: ${jwt.split('.').map(p => p.length).join('.')} (header.payload.signature lengths)`);
-      console.log(`✅ JWT Algorithm: RS256 with real RSA signature`);
-      console.log(`✅ JWT Structure: Valid OpenID4VCI proof JWT`);
-      console.log('\n🔍 [JWT_GENERATION_LOG] COMPLETE JWT TOKEN:');
-      console.log(jwt);
-      console.log('\n📝 [JWT_GENERATION_LOG] ======= END JWT CREATION LOG =======\n');
-
-      return jwt;
-
-    } catch (error) {
-      console.error('\n❌ [JWT_GENERATION_LOG] ======= JWT CREATION FAILED =======');
-      console.error(`❌ Error: ${error.message}`);
-      console.error(`❌ Stack: ${error.stack}`);
-      console.error('❌ [JWT_GENERATION_LOG] ======= END FAILURE LOG =======\n');
-      throw error;
+      await this._storeKey(CACHE_KEY, { privateKeyHex: privHex, pubJwk });
     }
+    const didJwk = `did:jwk:${Buffer.from(JSON.stringify(pubJwk)).toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'')}`;
+    const finalPayload = { ...payload, sub: didJwk };
+    const header = { typ: 'openid4vci-proof+jwt', alg: 'ES256', jwk: pubJwk };
+    const headerB64 = this.base64UrlEncode(JSON.stringify(header));
+    const payloadB64 = this.base64UrlEncode(JSON.stringify(finalPayload));
+    const signingInput = `${headerB64}.${payloadB64}`;
+    let forge2;
+    try { const m = await import('node-forge'); forge2 = m.default || m; }
+    catch { forge2 = require('node-forge'); }
+    const md = forge2.md.sha256.create();
+    md.update(signingInput, 'utf8');
+    const hashHex = md.digest().toHex();
+    const sig = keyPair.sign(hashHex);
+    const rHex = sig.r.toString('hex').padStart(64, '0');
+    const sHex = sig.s.toString('hex').padStart(64, '0');
+    const sigB64 = Buffer.from(rHex + sHex, 'hex').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+    console.log('[NATIVE_CRYPTO_JWT] \u2705 ES256 JWT created, sub:', didJwk.substring(0, 40) + '...');
+    return `${signingInput}.${sigB64}`;
+  }
+
+  async _loadStoredKey(key) {
+    try {
+      let AsyncStorage;
+      try { AsyncStorage = require('@react-native-async-storage/async-storage').default; }
+      catch { AsyncStorage = require('@react-native-async-storage/async-storage'); }
+      const raw = await AsyncStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  }
+
+  async _storeKey(key, data) {
+    try {
+      let AsyncStorage;
+      try { AsyncStorage = require('@react-native-async-storage/async-storage').default; }
+      catch { AsyncStorage = require('@react-native-async-storage/async-storage'); }
+      await AsyncStorage.setItem(key, JSON.stringify(data));
+    } catch {}
   }
 
   async createFallbackJWT(payload) {

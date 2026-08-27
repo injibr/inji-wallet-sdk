@@ -334,7 +334,7 @@ class OpenID4VCIService {
    */
   isCredentialTypeSupported(credentialInfo) {
     // Check format support
-    const supportedFormats = ['ldp_vc', 'jwt_vc_json', 'jwt_vc'];
+    const supportedFormats = ['ldp_vc', 'jwt_vc_json', 'jwt_vc', 'mso_mdoc'];
     if (!supportedFormats.includes(credentialInfo.format)) {
       return false;
     }

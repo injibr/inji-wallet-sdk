@@ -443,65 +443,40 @@ export class CredentialService {
   private async generateProperJWTProof(accessToken: string, issuer: any): Promise<string> {
     console.log('[CREDENTIAL_REQUEST] Generating JWT using NativeCryptoJWT module...');
 
-    // Extract c_nonce from access token
-    let cNonce = null;
+    // Decode access token once to extract c_nonce and aud (client_id)
+    let decodedToken: any = null;
     try {
-      if (!accessToken || typeof accessToken !== 'string') {
-        cNonce = `test-nonce-${Date.now()}`;
-      } else {
-        const tokenParts = accessToken.split('.');
-        if (tokenParts.length === 3) {
-          const payload = tokenParts[1];
-          const paddedPayload = payload + '='.repeat(4 - payload.length % 4);
-          const decodedToken = JSON.parse(Buffer.from(paddedPayload, 'base64').toString());
-          cNonce = decodedToken.c_nonce || decodedToken.nonce || `generated-nonce-${Date.now()}`;
-        } else {
-          cNonce = `fallback-nonce-${Date.now()}`;
+      if (accessToken && typeof accessToken === 'string') {
+        const parts = accessToken.split('.');
+        if (parts.length === 3) {
+          const p = parts[1];
+          decodedToken = JSON.parse(Buffer.from(p + '='.repeat(4 - p.length % 4), 'base64').toString());
         }
       }
-    } catch (decodeError) {
-      cNonce = `error-nonce-${Date.now()}`;
-    }
+    } catch (_) {}
 
-    // Create INJI-compatible payload structure
-    const now = Math.floor(Date.now() / 1000);
+    // c_nonce comes from the access token (govbr SSO embeds it)
+    const cNonce = decodedToken?.c_nonce || decodedToken?.nonce || null;
 
-    // FIXED: Use actual client_id from issuer config (not issuer.id)
-    const clientId = issuer.client_id || 'h-credenciaisverificaveis-dev.dataprev.gov.br'; // Use actual client_id from issuer
+    // client_id: use aud from access token (as the Python script does)
+    const clientId = issuer.client_id || decodedToken?.aud || 'h-credenciaisverificaveis-dev.dataprev.gov.br';
 
-    // DYNAMIC AUDIENCE: Use credential_issuer from issuer's well-known config
-    // This automatically adapts to dev/uat/prod based on the issuer's configuration
     const audience = issuer.credential_issuer || issuer.credentialIssuer || 'https://vcdemo.crabdance.com/certify';
 
-    console.log('[CREDENTIAL_REQUEST] 🎯 Using dynamic audience from credential_issuer:', {
-      credential_issuer: issuer.credential_issuer,
-      credentialIssuer: issuer.credentialIssuer,
-      audience: audience,
-      issuerId: issuer.id
-    });
-
-    // EXACT payload field order as expected JWT: iss, aud, iat, exp (NO nonce)
-    // CRITICAL FIX: EXACT payload field order as INJI: [iss, nonce, aud, iat, exp]
-    const payload = {
-      iss: clientId,           // 1. Issuer (client_id)
-      nonce: cNonce,           // 2. Nonce from access token - CRITICAL FOR PROOF VALIDATION!
-      aud: audience,           // 3. Audience (credential_issuer from well-known config)
-      iat: now,                // 4. Issued at
-      exp: now + 18000         // 5. Expires (5 hours like INJI)
+    const now = Math.floor(Date.now() / 1000);
+    const payload: any = {
+      iss: clientId,
+      aud: audience,
+      iat: now,
+      exp: now + 18000
     };
+    if (cNonce) payload.nonce = cNonce;
 
-    console.log('[CREDENTIAL_REQUEST] 🔧 FIXED JWT Payload to match INJI EXACTLY:');
-    console.log('[CREDENTIAL_REQUEST] - iss (client_id):', payload.iss);
-    console.log('[CREDENTIAL_REQUEST] - nonce (c_nonce from access token):', payload.nonce, '✅ CRITICAL FOR SERVER VALIDATION');
-    console.log('[CREDENTIAL_REQUEST] - aud (credential_audience):', payload.aud);
-    console.log('[CREDENTIAL_REQUEST] - iat (issued at):', payload.iat);
-    console.log('[CREDENTIAL_REQUEST] - exp (expires):', payload.exp, '(5 hours)');
+    console.log('[CREDENTIAL_REQUEST] JWT Payload:', { iss: payload.iss, aud: payload.aud, hasNonce: !!cNonce });
 
-    // Use the NativeCryptoJWT module
     try {
       const { nativeCryptoJWT } = require('./NativeCryptoJWT');
       const jwt = await nativeCryptoJWT.createJWT(payload);
-
       console.log('[CREDENTIAL_REQUEST] ✅ JWT created with NativeCryptoJWT module');
       return jwt;
     } catch (error) {
@@ -551,6 +526,22 @@ export class CredentialService {
         throw new Error('No access token available. User must be authenticated.');
       }
 
+      const isMsoMdoc = credentialType.format === 'mso_mdoc' || credentialType.fullConfig?.format === 'mso_mdoc';
+
+      let requestPayload: any;
+      let credentialContext: string[] | undefined;
+
+      if (isMsoMdoc) {
+        console.log('[CREDENTIAL_REQUEST] Using mso_mdoc format for doctype:', credentialType.doctype || credentialType.fullConfig?.doctype || credentialType.id);
+        requestPayload = {
+          format: 'mso_mdoc',
+          doctype: credentialType.doctype || credentialType.fullConfig?.doctype || credentialType.id,
+          proof: {
+            proof_type: 'jwt',
+            jwt: await this.generateProperJWTProof(resolvedToken, issuer)
+          }
+        };
+      } else {
       // Prepare credential request payload
       // Use credentialDefinitionTypes from well-known config (e.g., ["VerifiableCredential", "CARDocument"])
       // Or fallback to default pattern if not available
@@ -565,12 +556,12 @@ export class CredentialService {
         credentialTypeId: credentialType.id
       });
 
-      const credentialContext: string[] | undefined = credentialType.fullConfig?.credential_definition?.['@context'];
+      credentialContext = credentialType.fullConfig?.credential_definition?.['@context'];
       if (!credentialContext || credentialContext.length === 0) {
         throw new Error(`Missing @context in credential_definition for type: ${credentialType.id}. Check the issuer well-known config.`);
       }
 
-      const requestPayload = {
+      requestPayload = {
         format: 'ldp_vc',
         credential_definition: {
           type: credentialTypes,
@@ -583,6 +574,7 @@ export class CredentialService {
         doctype: credentialType.id,
         issuerId: issuer.id
       };
+      }
 
       progressCallback?.('Making authenticated API request to INJI endpoint...');
 
@@ -658,6 +650,42 @@ export class CredentialService {
 
       // Extract credential from response
       let receivedCredential = credentialResponse.credential || credentialResponse;
+
+      // --- mso_mdoc handling ---
+      if (isMsoMdoc) {
+        const mdocString = typeof receivedCredential === 'string'
+          ? receivedCredential
+          : credentialResponse.credential;
+        if (!mdocString || typeof mdocString !== 'string') {
+          throw new Error('Invalid mso_mdoc response: expected base64url string');
+        }
+        const credential: VC = {
+          id: vcId,
+          type: ['mso_mdoc', credentialType.doctype || credentialType.fullConfig?.doctype || credentialType.id],
+          name: credentialType.name || credentialType.id,
+          issuer: issuer.issuerUrl || issuer.id,
+          issuanceDate: new Date().toISOString(),
+          credentialSubject: {},
+          proof: { type: 'mso_mdoc' },
+          metadata: {
+            addedDate: new Date().toISOString(),
+            lastAccessed: new Date().toISOString(),
+            isPinned: false,
+            tags: [],
+            issuerInfo: issuer,
+            credentialType: credentialType,
+            downloadedAt: new Date().toISOString(),
+            source: 'inji_endpoint',
+            mdocData: mdocString,
+            originalResponse: credentialResponse
+          },
+        };
+        const storedId = await this.storageService!.storeCredential(credential);
+        console.log(`[CREDENTIAL_REQUEST] mso_mdoc stored: ${storedId}`);
+        progressCallback?.('Credential downloaded successfully');
+        return credential;
+      }
+      // --- end mso_mdoc handling ---
 
       // Log the received credential from server
       console.log('\n🎫 ==================== RECEIVED CREDENTIAL FROM SERVER ====================');

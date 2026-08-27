@@ -158,6 +158,8 @@ export class IssuerService extends EventEmitter3 {
             fields: [],
             display: config.display?.[0] || {},
             credentialDefinitionTypes: credentialDefinitionTypes,
+            format: config.format,
+            doctype: config.doctype || typeId,
             fullConfig: config,
           };
         });

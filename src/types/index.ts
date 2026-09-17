@@ -64,31 +64,10 @@ export interface VerificationResult {
   notExpired: boolean;
 }
 
-export interface SharingRequest {
-  requesterDID: string;
-  requestedCredentials: string[];
-  purpose: string;
-  deadline?: string;
-}
-
 export interface ShareResult {
   success: boolean;
   transactionId: string;
   error?: string;
-}
-
-export interface BackupResult {
-  success: boolean;
-  backupId: string;
-  timestamp: string;
-  size: number;
-  error?: string;
-}
-
-export interface RestoreResult {
-  success: boolean;
-  restoredCredentials: number;
-  errors: string[];
 }
 
 // SDK Configuration Types
@@ -123,14 +102,6 @@ export interface BackupConfig {
   automatic?: boolean;
   schedule?: 'daily' | 'weekly' | 'manual';
   encryptBackups?: boolean;
-}
-
-export interface UIConfig {
-  theme?: 'light' | 'dark' | 'auto';
-  primaryColor?: string;
-  secondaryColor?: string;
-  customComponents?: Partial<CustomComponents>;
-  animations?: boolean;
 }
 
 export interface IssuerConfig {
@@ -178,34 +149,7 @@ export interface IssuerInfo {
   credentialTypes: string[];
 }
 
-export interface CustomComponents {
-  VCCard: React.ComponentType<VCCardProps>;
-  VCScanner: React.ComponentType<VCScannerProps>;
-  VCAuth: React.ComponentType<VCAuthProps>;
-  LoadingScreen: React.ComponentType;
-  ErrorBoundary: React.ComponentType<{ children: React.ReactNode }>;
-}
-
 // Hook Types
-export interface UseCredentialsResult {
-  credentials: VC[];
-  loading: boolean;
-  error: Error | null;
-  refresh: () => Promise<void>;
-  addCredential: (credential: CredentialInput) => Promise<VC>;
-  deleteCredential: (id: string) => Promise<boolean>;
-  searchCredentials: (query: string) => Promise<VC[]>;
-}
-
-export interface UseAuthResult {
-  isAuthenticated: boolean;
-  user: User | null;
-  loading: boolean;
-  authenticate: () => Promise<AuthResult>;
-  logout: () => Promise<void>;
-  // setupBiometrics: () => Promise<boolean>;
-}
-
 // Event Types
 export interface SDKEvents {
   credentialAdded: (credential: VC) => void;
@@ -214,7 +158,6 @@ export interface SDKEvents {
   authenticationRequired: () => void;
   authenticationSuccess: (user: User) => void;
   authenticationFailed: (error: string) => void;
-  backupCompleted: (result: BackupResult) => void;
   error: (error: SDKError) => void;
 }
 
@@ -226,40 +169,6 @@ export interface SDKError {
 }
 
 // Component Props Types
-export interface VCCardProps {
-  credential: VC;
-  onPress?: (credential: VC) => void;
-  onShare?: (credential: VC) => void;
-  onDelete?: (credential: VC) => void;
-  showActions?: boolean;
-  customStyle?: any;
-}
-
-export interface VCScannerProps {
-  onQRScanned: (data: string) => void;
-  onCredentialReceived?: (credential: VC) => void;
-  enableFaceVerification?: boolean;
-  showInstructions?: boolean;
-  customOverlay?: React.ComponentType;
-}
-
-export interface VCWalletProps {
-  credentials?: VC[];
-  onCredentialSelect?: (credential: VC) => void;
-  enableSearch?: boolean;
-  enableFilters?: boolean;
-  customCard?: React.ComponentType<VCCardProps>;
-  emptyState?: React.ComponentType;
-}
-
-export interface VCAuthProps {
-  onAuthSuccess?: (user: User) => void;
-  onAuthError?: (error: string) => void;
-  // biometricsEnabled?: boolean;
-  showLogo?: boolean;
-  customTitle?: string;
-}
-
 export interface CredentialInput {
   type: string;
   issuer: string;
@@ -268,54 +177,3 @@ export interface CredentialInput {
   metadata?: Partial<VCMetadata>;
 }
 
-export interface CredentialFilters {
-  type?: string;
-  issuer?: string;
-  tags?: string[];
-  isPinned?: boolean;
-  dateRange?: {
-    start: string;
-    end: string;
-  };
-}
-
-export interface CredentialUpdate {
-  name?: string;
-  metadata?: Partial<VCMetadata>;
-}
-
-export interface CredentialStats {
-  total: number;
-  byType: Record<string, number>;
-  byIssuer: Record<string, number>;
-  pinned: number;
-  expired: number;
-}
-
-export interface SharingRecipient {
-  did: string;
-  name?: string;
-  purpose: string;
-}
-
-export interface SharingRecord {
-  id: string;
-  timestamp: string;
-  credentialIds: string[];
-  recipient: SharingRecipient;
-  method: 'qr' | 'bluetooth' | 'network';
-  status: 'success' | 'failed' | 'pending';
-}
-
-export interface StorageStats {
-  totalSize: number;
-  credentialCount: number;
-  backupCount: number;
-  lastBackup?: string;
-}
-
-export interface ExportData {
-  format: 'json' | 'csv';
-  data: string;
-  timestamp: string;
-}

@@ -271,268 +271,154 @@ export class SDKEventEmitter extends EventEmitter<AllEvents> {
     super();
   }
 
-  /**
-   * Emit a credential download started event
-   */
   emitCredentialDownloadStarted(credentialType: any, issuer: any) {
     this.emit('credential:downloadStarted', { credentialType, issuer });
   }
 
-  /**
-   * Emit credential download progress
-   */
   emitCredentialDownloadProgress(current: number, total: number, progress: number, currentStep: string) {
     this.emit('credential:downloadProgress', { current, total, progress, currentStep });
   }
 
-  /**
-   * Emit credential download complete
-   */
   emitCredentialDownloadComplete(credential: any, credentialType: any, issuer: any) {
     this.emit('credential:downloadComplete', { credential, credentialType, issuer });
   }
 
-  /**
-   * Emit credential download error
-   */
   emitCredentialDownloadError(error: Error, credentialType: any, issuer: any, errorCode?: number) {
     this.emit('credential:downloadError', { error, errorCode, credentialType, issuer });
   }
 
-  /**
-   * Emit credential not available (424 error)
-   */
   emitCredentialNotAvailable424(credentialType: any, issuer: any, message: string) {
     this.emit('credential:notAvailable424', { credentialType, issuer, message });
   }
 
-  /**
-   * Emit credential deleted
-   */
   emitCredentialDeleted(credentialId: string) {
     this.emit('credential:deleted', { credentialId });
   }
 
-  /**
-   * Emit credential list updated
-   */
   emitCredentialListUpdated(credentials: any[]) {
     this.emit('credential:listUpdated', { credentials });
   }
 
-  /**
-   * Emit share request parsed
-   */
   emitShareRequestParsed(verifierInfo: any, requestedCredentials: any[], authRequest: any) {
     this.emit('share:requestParsed', { verifierInfo, requestedCredentials, authRequest });
   }
 
-  /**
-   * Emit share download started
-   */
   emitShareDownloadStarted(totalCredentials: number) {
     this.emit('share:downloadStarted', { totalCredentials });
   }
 
-  /**
-   * Emit share download progress
-   */
   emitShareDownloadProgress(current: number, total: number, currentItem: string) {
     this.emit('share:downloadProgress', { current, total, currentItem });
   }
 
-  /**
-   * Emit share download complete
-   */
   emitShareDownloadComplete(successCount: number, error424Count: number, realErrorCount: number) {
     this.emit('share:downloadComplete', { successCount, error424Count, realErrorCount });
   }
 
-  /**
-   * Emit credential not available during share (424)
-   */
   emitShareCredentialNotAvailable424(credentialType: string, credentialName: string, issuer: string) {
     this.emit('share:credentialNotAvailable424', { credentialType, credentialName, issuer });
   }
 
-  /**
-   * Emit consent required
-   */
   emitShareConsentRequired(verifierInfo: any) {
     this.emit('share:consentRequired', { verifierInfo });
   }
 
-  /**
-   * Emit sharing started
-   */
   emitShareSharingStarted() {
     this.emit('share:sharingStarted');
   }
 
-  /**
-   * Emit sharing progress
-   */
   emitShareSharingProgress(message: string) {
     this.emit('share:sharingProgress', { message });
   }
 
-  /**
-   * Emit sharing complete
-   */
   emitShareSharingComplete(success: boolean, protocolNumber?: string, transactionId?: string) {
     this.emit('share:sharingComplete', { success, protocolNumber, transactionId });
   }
 
-  /**
-   * Emit share error
-   */
   emitShareError(error: Error, step: 'parse' | 'download' | 'consent' | 'sharing') {
     this.emit('share:error', { error, step });
   }
 
-  /**
-   * Emit user declined sharing
-   */
   emitShareUserDeclined() {
     this.emit('share:userDeclined');
   }
 
-  /**
-   * Emit authentication required
-   */
   emitAuthRequired(authUrl: string, reason: 'download' | 'share' | 'general', issuer?: any) {
     this.emit('auth:required', { authUrl, issuer, reason });
   }
 
-  /**
-   * Emit authentication started
-   */
   emitAuthStarted() {
     this.emit('auth:started');
   }
 
-  /**
-   * Emit authentication progress
-   */
   emitAuthProgress(message: string) {
     this.emit('auth:progress', { message });
   }
 
-  /**
-   * Emit authentication complete
-   */
   emitAuthComplete(success: boolean, token?: string) {
     this.emit('auth:complete', { success, token });
   }
 
-  /**
-   * Emit authentication error
-   */
   emitAuthError(error: Error, message: string) {
     this.emit('auth:error', { error, message });
   }
 
-  /**
-   * Emit session expired
-   */
   emitAuthSessionExpired() {
     this.emit('auth:sessionExpired');
   }
 
-  /**
-   * Emit logout
-   */
   emitAuthLogout() {
     this.emit('auth:logout');
   }
 
-  /**
-   * Emit issuer list updated
-   */
   emitIssuerListUpdated(issuers: any[]) {
     this.emit('issuer:listUpdated', { issuers });
   }
 
-  /**
-   * Emit issuer selected
-   */
   emitIssuerSelected(issuer: any) {
     this.emit('issuer:selected', { issuer });
   }
 
-  /**
-   * Emit issuer credential types loaded
-   */
   emitIssuerCredentialTypesLoaded(issuer: any, credentialTypes: any[]) {
     this.emit('issuer:credentialTypesLoaded', { issuer, credentialTypes });
   }
 
-  /**
-   * Emit issuer error
-   */
   emitIssuerError(error: Error, issuer?: any) {
     this.emit('issuer:error', { error, issuer });
   }
 
-  /**
-   * Emit device registration started
-   */
   emitDeviceRegistrationStarted() {
     this.emit('device:registrationStarted');
   }
 
-  /**
-   * Emit device registration complete
-   */
   emitDeviceRegistrationComplete(deviceId: string, cpf: string) {
     this.emit('device:registrationComplete', { deviceId, cpf });
   }
 
-  /**
-   * Emit device registration error
-   */
   emitDeviceRegistrationError(error: Error) {
     this.emit('device:registrationError', { error });
   }
 
-  /**
-   * Emit FCM token updated
-   */
   emitDeviceFcmTokenUpdated(token: string) {
     this.emit('device:fcmTokenUpdated', { token });
   }
 
-  /**
-   * Emit notification received
-   */
   emitNotificationReceived(notification: any, type: string) {
     this.emit('notification:received', { notification, type });
   }
 
-  /**
-   * Emit credential ready notification
-   */
   emitNotificationCredentialReady(credentialType: string, issuer: string, notificationId: string) {
     this.emit('notification:credentialReady', { credentialType, issuer, notificationId });
   }
 
-  /**
-   * Emit SDK initialized
-   */
   emitSDKInitialized() {
     this.emit('sdk:initialized');
   }
 
-  /**
-   * Emit SDK error
-   */
   emitSDKError(error: Error, context: string) {
     this.emit('sdk:error', { error, context });
   }
 
-  /**
-   * Emit SDK ready
-   */
   emitSDKReady() {
     this.emit('sdk:ready');
   }

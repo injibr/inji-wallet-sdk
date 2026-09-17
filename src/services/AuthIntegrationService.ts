@@ -85,46 +85,17 @@ export class AuthIntegrationService {
       console.log('[AUTH INTEGRATION] Checking if authentication is required...');
 
       const isAuthenticated = await this.isUserAuthenticated();
-
       if (!isAuthenticated) {
         console.log('[AUTH INTEGRATION] Authentication required - no valid tokens found');
-        return {
-          required: true,
-          reason: 'Please authenticate with your gov.br account to download credentials'
-        };
-      }
-
-      // Check if we have user info
-      const userData = await AsyncStorage.getItem('user_data');
-      if (!userData) {
-        console.log('[AUTH INTEGRATION] Authentication required - no user data found');
-        return {
-          required: true,
-          reason: 'User profile information is missing. Please re-authenticate.'
-        };
-      }
-
-      // Check if we have access token
-      const accessToken = await SecureStore.getItemAsync('access_token');
-      if (!accessToken) {
-        console.log('[AUTH INTEGRATION] Authentication required - no access token found');
-        return {
-          required: true,
-          reason: 'Access token is missing. Please re-authenticate.'
-        };
+        return { required: true, reason: 'Please authenticate with your gov.br account to download credentials' };
       }
 
       console.log('[AUTH INTEGRATION] Authentication not required - user is authenticated');
-      return {
-        required: false
-      };
+      return { required: false };
 
     } catch (error) {
       console.error('[AUTH INTEGRATION] Error checking authentication requirements:', error);
-      return {
-        required: true,
-        reason: 'Error checking authentication status. Please try again.'
-      };
+      return { required: true, reason: 'Error checking authentication status. Please try again.' };
     }
   }
 

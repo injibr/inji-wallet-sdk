@@ -1,15 +1,4 @@
-/**
- * ShareVCService - OpenID4VP Protocol Implementation for VC Sharing
- * Pure JavaScript/TypeScript implementation for Expo compatibility
- * Supports manual URL input (no QR scanning required)
- */
-
-import {
-  VCSDKConfig,
-  VP,
-  VC,
-  ShareResult
-} from '../types';
+import { VCSDKConfig, VP, VC, ShareResult } from '../types';
 import { CredentialService } from './CredentialService';
 import { JSONPath } from 'jsonpath-plus';
 import { Buffer } from 'buffer';
@@ -19,7 +8,10 @@ import bs58 from 'bs58';
 import { NativeModules, Platform } from 'react-native';
 import '../polyfills';
 
-// OpenID4VP Types
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
 export interface PresentationDefinition {
   id: string;
   input_descriptors: InputDescriptor[];
@@ -32,18 +24,12 @@ export interface InputDescriptor {
   name?: string;
   purpose?: string;
   format?: Record<string, any>;
-  constraints: {
-    fields?: FieldConstraint[];
-  };
+  constraints: { fields?: FieldConstraint[] };
 }
 
 export interface FieldConstraint {
   path: string[];
-  filter?: {
-    type?: string;
-    pattern?: string;
-    const?: any;
-  };
+  filter?: { type?: string; pattern?: string; const?: any };
 }
 
 export interface AuthorizationRequest {
@@ -57,10 +43,7 @@ export interface AuthorizationRequest {
   presentation_definition?: PresentationDefinition;
   presentation_definition_uri?: string;
   response_mode?: string;
-  client_metadata?: {
-    client_name?: string;
-    logo_uri?: string;
-  };
+  client_metadata?: { client_name?: string; logo_uri?: string };
 }
 
 export interface VerifierInfo {
@@ -74,6 +57,34 @@ export interface MatchedCredentials {
   [inputDescriptorId: string]: VC[];
 }
 
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const SD_JWT_FORMATS = ['vc+sd-jwt', 'dc+sd-jwt'] as const;
+type SdJwtFormat = (typeof SD_JWT_FORMATS)[number];
+const isSdJwt = (f: string): f is SdJwtFormat => SD_JWT_FORMATS.includes(f as SdJwtFormat);
+
+function vcFormat(vc: VC): string {
+  // Explicit format field (set by CredentialService on SD-JWT and mso_mdoc)
+  const explicit = (vc as any).format as string | undefined;
+  if (explicit) return explicit;
+
+  // Detect from vc.type array (first non-VerifiableCredential entry)
+  const types = Array.isArray(vc.type) ? vc.type : [vc.type];
+  for (const t of types) {
+    if (isSdJwt(t)) return t;
+    if (t === 'mso_mdoc') return 'mso_mdoc';
+  }
+
+  // proof.type is the signature suite, not the VC format — always ldp_vc here
+  return 'ldp_vc';
+}
+
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
+
 export class ShareVCService {
   private config: VCSDKConfig;
   private credentialService: CredentialService | null = null;
@@ -86,569 +97,562 @@ export class ShareVCService {
 
   async init(credentialService: CredentialService): Promise<void> {
     this.credentialService = credentialService;
-    console.log('[ShareVC] Service initialized successfully');
   }
 
-  /**
-   * Parse OpenID4VP authorization request from URL
-   * Supports both direct presentation_definition and presentation_definition_uri
-   */
+  // ---------------------------------------------------------------------------
+  // Parse authorization request
+  // ---------------------------------------------------------------------------
+
   async parseAuthorizationRequest(url: string): Promise<AuthorizationRequest> {
-    try {
-      console.log('[ShareVC] Parsing authorization request from URL:', url);
+    const p = parseQueryString(url);
 
-      // Parse URL
-      const urlObj = new URL(url);
-      const params = urlObj.searchParams;
+    const authRequest: AuthorizationRequest = {
+      client_id: p['client_id'] ?? '',
+      redirect_uri: p['redirect_uri'] ?? p['response_uri'] ?? '',
+      response_type: p['response_type'] ?? 'vp_token',
+      scope: p['scope'],
+      nonce: p['nonce'],
+      state: p['state'],
+      response_mode: p['response_mode'] ?? 'direct_post',
+      domain: p['client_id'] ?? '',
+    };
 
-      // Extract parameters
-      // Support both redirect_uri (OAuth) and response_uri (OpenID4VP)
-      const redirectUri = params.get('redirect_uri') || params.get('response_uri') || '';
-
-      const authRequest: AuthorizationRequest = {
-        client_id: params.get('client_id') || '',
-        redirect_uri: redirectUri,
-        response_type: params.get('response_type') || 'vp_token',
-        scope: params.get('scope') || undefined,
-        nonce: params.get('nonce') || undefined,
-        state: params.get('state') || undefined,
-        response_mode: params.get('response_mode') || 'direct_post',
-      };
-
-      // Check for client_metadata
-      const clientMetadataParam = params.get('client_metadata');
-      if (clientMetadataParam) {
-        try {
-          authRequest.client_metadata = JSON.parse(clientMetadataParam);
-        } catch (e) {
-          console.warn('[ShareVC] Failed to parse client_metadata:', e);
-        }
-      }
-
-      // Get presentation definition - either inline or from URI
-      const presentationDefParam = params.get('presentation_definition');
-      const presentationDefUri = params.get('presentation_definition_uri');
-
-      if (presentationDefParam) {
-        // Inline presentation definition
-        try {
-          authRequest.presentation_definition = JSON.parse(presentationDefParam);
-          console.log('[ShareVC] Found inline presentation_definition');
-        } catch (e) {
-          console.error('[ShareVC] Failed to parse presentation_definition:', e);
-          throw new Error('Invalid presentation_definition format');
-        }
-      } else if (presentationDefUri) {
-        // Fetch from URI
-        console.log('[ShareVC] Fetching presentation_definition from URI:', presentationDefUri);
-        authRequest.presentation_definition_uri = presentationDefUri;
-        authRequest.presentation_definition = await this.fetchPresentationDefinition(presentationDefUri);
-      } else {
-        throw new Error('No presentation_definition or presentation_definition_uri found in request');
-      }
-
-      // Validate required fields
-      if (!authRequest.client_id) {
-        throw new Error('Missing required parameter: client_id');
-      }
-      if (!authRequest.redirect_uri) {
-        throw new Error('Missing required parameter: redirect_uri');
-      }
-
-      console.log('[ShareVC] Authorization request parsed successfully');
-      return authRequest;
-
-    } catch (error) {
-      console.error('[ShareVC] Failed to parse authorization request:', error);
-      throw error;
+    const clientMetadataRaw = p['client_metadata'];
+    if (clientMetadataRaw) {
+      try { authRequest.client_metadata = JSON.parse(clientMetadataRaw); } catch (_) {}
     }
+
+    const pdRaw = p['presentation_definition'];
+    const pdUri = p['presentation_definition_uri'];
+
+    if (pdRaw) {
+      authRequest.presentation_definition = JSON.parse(pdRaw);
+    } else if (pdUri) {
+      authRequest.presentation_definition_uri = pdUri;
+      authRequest.presentation_definition = await this.fetchPresentationDefinition(pdUri);
+    } else {
+      throw new Error('No presentation_definition or presentation_definition_uri in request');
+    }
+
+    if (!authRequest.client_id) throw new Error('Missing required parameter: client_id');
+    if (!authRequest.redirect_uri) throw new Error('Missing required parameter: redirect_uri');
+
+    return authRequest;
   }
 
-  /**
-   * Fetch presentation definition from URI
-   */
   private async fetchPresentationDefinition(uri: string): Promise<PresentationDefinition> {
-    try {
-      const response = await fetch(uri, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-        },
-        // @ts-ignore - timeout not in TS types but works in React Native
-        timeout: this.config.network?.timeout || 30000,
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch presentation definition: ${response.status} ${response.statusText}`);
-      }
-
-      const presentationDef = await response.json();
-      console.log('[ShareVC] Presentation definition fetched successfully');
-      return presentationDef;
-
-    } catch (error) {
-      console.error('[ShareVC] Failed to fetch presentation definition:', error);
-      throw error;
-    }
+    const response = await fetch(uri, { headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error(`Failed to fetch presentation definition: ${response.status}`);
+    return response.json();
   }
 
-  /**
-   * Extract verifier information from authorization request
-   */
   getVerifierInfo(authRequest: AuthorizationRequest): VerifierInfo {
     return {
-      name: authRequest.client_metadata?.client_name || authRequest.client_id,
+      name: authRequest.client_metadata?.client_name ?? authRequest.client_id,
       clientId: authRequest.client_id,
       purpose: authRequest.presentation_definition?.purpose,
       logoUri: authRequest.client_metadata?.logo_uri,
     };
   }
 
-  /**
-   * Match user's credentials against presentation definition
-   * Using the same logic as Inji's OpenID4VP implementation
-   */
+  // ---------------------------------------------------------------------------
+  // Match credentials — supports ldp_vc, vc+sd-jwt, dc+sd-jwt, mso_mdoc
+  // ---------------------------------------------------------------------------
+
   async matchCredentials(
     presentationDef: PresentationDefinition,
-    userCredentials: VC[]
+    userCredentials: VC[],
   ): Promise<MatchedCredentials> {
-    try {
-      console.log('[ShareVC] Matching credentials against presentation definition');
+    const matched: MatchedCredentials = {};
 
-      const matchedVCs: MatchedCredentials = {};
-      const requestedClaims = new Set<string>();
-      let anyInputDescriptorHasFormatOrConstraints = false;
+    for (const vc of userCredentials) {
+      for (const descriptor of presentationDef.input_descriptors) {
+        const requestedFormat = descriptor.format ?? presentationDef.format;
+        const format = vcFormat(vc);
 
-      // Iterate through each credential and check against input descriptors
-      for (const vc of userCredentials) {
-        for (const inputDescriptor of presentationDef.input_descriptors) {
-          const format = inputDescriptor.format ?? presentationDef.format;
+        const formatMatches = requestedFormat
+          ? this.formatMatches(requestedFormat, vc)
+          : true; // no format constraint = accept all
 
-          anyInputDescriptorHasFormatOrConstraints =
-            anyInputDescriptorHasFormatOrConstraints ||
-            format !== undefined ||
-            inputDescriptor.constraints.fields !== undefined;
+        const constraintMatches = this.constraintMatches(descriptor.constraints, vc);
 
-          // Check if credential matches constraints
-          const isMatchingConstraints = this.isVCMatchingRequestConstraints(
-            inputDescriptor.constraints,
-            vc,
-            requestedClaims
-          );
+        const isMatch = requestedFormat && descriptor.constraints.fields
+          ? formatMatches && constraintMatches   // both required when both specified
+          : formatMatches || constraintMatches;  // either sufficient otherwise
 
-          // Check if format and proof type match
-          const areMatchingFormatAndProofType = this.areVCFormatAndProofTypeMatchingRequest(
-            format,
-            vc
-          );
-
-          // Add to matched credentials based on criteria
-          if (inputDescriptor.constraints.fields && format) {
-            if (isMatchingConstraints && areMatchingFormatAndProofType) {
-              if (!matchedVCs[inputDescriptor.id]) {
-                matchedVCs[inputDescriptor.id] = [];
-              }
-              matchedVCs[inputDescriptor.id].push(vc);
-            }
-          } else if (isMatchingConstraints || areMatchingFormatAndProofType) {
-            if (!matchedVCs[inputDescriptor.id]) {
-              matchedVCs[inputDescriptor.id] = [];
-            }
-            matchedVCs[inputDescriptor.id].push(vc);
-          }
+        if (isMatch) {
+          if (!matched[descriptor.id]) matched[descriptor.id] = [];
+          matched[descriptor.id].push(vc);
         }
       }
-
-      // Log matching results
-      const totalMatched = Object.values(matchedVCs).reduce((sum, vcs) => sum + vcs.length, 0);
-      console.log('[ShareVC] Matched credentials:', Object.keys(matchedVCs).length, 'input descriptors');
-      console.log('[ShareVC] Total VCs matched:', totalMatched);
-      console.log('[ShareVC] Requested claims:', Array.from(requestedClaims).join(', '));
-
-      return matchedVCs;
-
-    } catch (error) {
-      console.error('[ShareVC] Failed to match credentials:', error);
-      throw error;
     }
+
+    return matched;
   }
 
-  /**
-   * Check if VC format and proof type match the request
-   * Based on Inji's implementation
-   */
-  private areVCFormatAndProofTypeMatchingRequest(
-    format: Record<string, any> | undefined,
-    vc: VC
-  ): boolean {
-    if (!format) {
-      return false;
-    }
+  private formatMatches(requestedFormat: Record<string, any>, vc: VC): boolean {
+    const format = vcFormat(vc);
+    const proofType = vc.proof?.type ?? '';
 
-    // Get VC format type (e.g., "ldp_vc", "jwt_vc_json")
-    const vcFormatType = vc.format || 'ldp_vc';
-
-    // Get VC proof type (e.g., "Ed25519Signature2018")
-    const vcProofType = vc.proof?.type || '';
-
-    // Check if format matches and proof type is in allowed list
-    return Object.entries(format).some(([type, value]) => {
-      if (type !== vcFormatType) {
-        return false;
+    return Object.entries(requestedFormat).some(([fmt, value]) => {
+      if (fmt !== format) return false;
+      if (value?.proof_type && Array.isArray(value.proof_type)) {
+        return value.proof_type.includes(proofType);
       }
-
-      // Check if proof_type exists and matches
-      if (value.proof_type && Array.isArray(value.proof_type)) {
-        return value.proof_type.includes(vcProofType);
-      }
-
       return true;
     });
   }
 
-  /**
-   * Check if VC matches request constraints using JSONPath
-   * Based on Inji's implementation
-   */
-  private isVCMatchingRequestConstraints(
+  private constraintMatches(
     constraints: { fields?: FieldConstraint[] },
     vc: VC,
-    requestedClaims: Set<string>
   ): boolean {
-    if (!constraints.fields || constraints.fields.length === 0) {
-      return false;
-    }
+    if (!constraints.fields?.length) return false;
+
+    // For SD-JWT: match against decoded JWT claims stored in credentialSubject
+    const searchTarget = isSdJwt(vcFormat(vc))
+      ? { ...vc, ...vc.credentialSubject }
+      : vc;
 
     for (const field of constraints.fields) {
       for (const path of field.path) {
-        // Extract claim name from path
-        const pathArray = JSONPath.toPathArray(path);
-        const claimName = pathArray[pathArray.length - 1];
-        requestedClaims.add(claimName);
+        const value = JSONPath({ path, json: searchTarget, wrap: false });
+        if (value == null) continue;
 
-        // Use JSONPath to find value in credential
-        const valueMatchingPath = JSONPath({
-          path: path,
-          json: vc,
-          wrap: false
-        });
-
-        // Check if value exists and matches filter
-        if (valueMatchingPath !== undefined && valueMatchingPath !== null) {
-          // If there's a filter, check it
-          if (field.filter) {
-            // Pattern check (for strings and arrays)
-            if (field.filter.pattern) {
-              // Handle both string and array values
-              if (Array.isArray(valueMatchingPath)) {
-                // For arrays, check if any element matches the pattern
-                const hasMatch = valueMatchingPath.some(item =>
-                  String(item).includes(field.filter.pattern)
-                );
-                if (!hasMatch) {
-                  continue;
-                }
-              } else {
-                // For strings, check if pattern is included
-                const valueStr = String(valueMatchingPath);
-                if (!valueStr.includes(field.filter.pattern)) {
-                  continue;
-                }
-              }
-            }
-
-            // Const check (exact match)
-            if (field.filter.const !== undefined && field.filter.const !== valueMatchingPath) {
-              continue;
-            }
-          }
-
-          // If we reach here, the field matches
-          return true;
+        if (field.filter?.pattern) {
+          const str = Array.isArray(value)
+            ? value.some(v => String(v).includes(field.filter!.pattern!))
+            : String(value).includes(field.filter.pattern);
+          if (!str) continue;
         }
+
+        if (field.filter?.const !== undefined && field.filter.const !== value) continue;
+
+        return true;
       }
     }
 
     return false;
   }
 
-  /**
-   * Construct Verifiable Presentation with Ed25519Signature2020 proof
-   */
+  // ---------------------------------------------------------------------------
+  // Construct presentation — routes by format
+  // ---------------------------------------------------------------------------
+
   async constructVerifiablePresentation(
     selectedVCs: MatchedCredentials,
-    authRequest: AuthorizationRequest
+    authRequest: AuthorizationRequest,
+    selectedDisclosuresByVcId?: Record<string, string[]>,
   ): Promise<VP> {
-    try {
-      console.log('[ShareVC] Constructing Verifiable Presentation');
+    const credentialMapping: Array<{ inputDescriptorId: string; vc: VC }> = [];
+    Object.entries(selectedVCs).forEach(([id, vcs]) =>
+      vcs.forEach(vc => credentialMapping.push({ inputDescriptorId: id, vc }))
+    );
 
-      if (!this.privateKey) {
-        this.privateKey = ed.utils.randomPrivateKey();
-        this.publicKey = await ed.getPublicKeyAsync(this.privateKey);
-      }
+    if (credentialMapping.length === 0) throw new Error('No credentials selected for sharing');
 
-      const credentialMapping: Array<{ inputDescriptorId: string; vc: VC }> = [];
-      Object.entries(selectedVCs).forEach(([inputDescriptorId, vcs]) => {
-        vcs.forEach(vc => credentialMapping.push({ inputDescriptorId, vc }));
-      });
+    // Detect dominant format (first credential wins)
+    const firstFormat = vcFormat(credentialMapping[0].vc);
 
-      if (credentialMapping.length === 0) {
-        throw new Error('No credentials selected for sharing');
-      }
+    if (isSdJwt(firstFormat)) {
+      return this.buildSdJwtPresentation(credentialMapping, authRequest, selectedDisclosuresByVcId);
+    }
 
-      // Resolve raw W3C credentials
-      const rawCredentials = credentialMapping.map(({ vc }) => {
-        const vcMeta = vc.metadata as any;
-        const credential = vcMeta?.originalCredential ?? vcMeta?.originalResponse?.credential ?? {
+    if (firstFormat === 'mso_mdoc') {
+      return this.buildMdocPresentation(credentialMapping, authRequest);
+    }
+
+    // Default: ldp_vc
+    return this.buildLdpVP(credentialMapping, authRequest);
+  }
+
+  // ---------------------------------------------------------------------------
+  // ldp_vc — Ed25519Signature2020 VP
+  // ---------------------------------------------------------------------------
+
+  private async buildLdpVP(
+    credentialMapping: Array<{ inputDescriptorId: string; vc: VC }>,
+    authRequest: AuthorizationRequest,
+  ): Promise<VP> {
+    await this.ensureKeyPair();
+
+    const rawCredentials = credentialMapping.map(({ vc }) => {
+      const meta = vc.metadata as any;
+      const credential = meta?.originalCredential
+        ?? meta?.originalResponse?.credential
+        ?? {
           '@context': vc['@context'],
           type: Array.isArray(vc.type) ? vc.type : [vc.type],
-          issuer: vc.issuer || '',
-          issuanceDate: vc.issuanceDate || new Date().toISOString(),
-          credentialSubject: vc.credentialSubject || {},
+          issuer: vc.issuer,
+          issuanceDate: vc.issuanceDate,
+          credentialSubject: vc.credentialSubject,
           proof: vc.proof,
         };
 
-        if (!credential.proof || Object.keys(credential.proof).length === 0) {
-          throw new Error(`Cannot share VC: no valid proof on "${vc.name || vc.id}"`);
-        }
-
-        // Ensure ed25519-2020 context is present (fallback for old VCs)
-        const ED25519_CTX = 'https://w3id.org/security/suites/ed25519-2020/v1';
-        const ctx = Array.isArray(credential['@context']) ? credential['@context'] : [credential['@context']];
-        if (!ctx.includes(ED25519_CTX)) ctx.push(ED25519_CTX);
-        credential['@context'] = ctx;
-
-        return credential;
-      });
-
-      // Build holder DID from public key (same format as inji-wallet: did:jwk:<base64url>#0)
-      const publicJwk = JSON.stringify({ kty: 'OKP', crv: 'Ed25519', x: Buffer.from(this.publicKey!).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '') });
-      const holderDID = `did:jwk:${Buffer.from(publicJwk).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')}#0`;
-
-      const jsonld = require('jsonld');
-
-      const contextCache: Record<string, any> = {};
-
-      const fetchAndCache = async (url: string): Promise<any> => {
-        if (contextCache[url]) return contextCache[url];
-        const res = await fetch(url, { headers: { Accept: 'application/ld+json, application/json' }, redirect: 'follow' });
-        if (!res.ok) throw new Error(`HTTP ${res.status} fetching context: ${url}`);
-        const doc = await res.json();
-        contextCache[url] = doc;
-        const nested: string[] = [];
-        const rawCtx = doc['@context'];
-        if (typeof rawCtx === 'string' && rawCtx.startsWith('http')) nested.push(rawCtx);
-        else if (Array.isArray(rawCtx)) rawCtx.forEach((c: any) => { if (typeof c === 'string' && c.startsWith('http')) nested.push(c); });
-        await Promise.all(nested.filter(u => !contextCache[u]).map(fetchAndCache));
-        return doc;
-      };
-
-      const documentLoader = async (url: string) => {
-        try {
-          const document = await fetchAndCache(url);
-          return { contextUrl: null, document, documentUrl: url };
-        } catch (e: any) {
-          console.error('[ShareVC] documentLoader FETCH FAILED:', url, e.message);
-          throw e;
-        }
-      };
-
-      jsonld.documentLoader = documentLoader;
-
-      const canonizeOpts = { algorithm: 'URDNA2015', format: 'application/n-quads', documentLoader };
-
-      // VP body without VP proof
-      const vpId = `urn:uuid:${this.generateUUID()}`;
-      const vpContexts = rawCredentials
-        .flatMap((c: any) => Array.isArray(c['@context']) ? c['@context'] : [c['@context']])
-        .filter(Boolean);
-      const vpContext: string[] = [...new Set(vpContexts)];
-
-      const vpBody: any = {
-        '@context': vpContext,
-        type: ['VerifiablePresentation'],
-        verifiableCredential: rawCredentials,
-        id: vpId,
-        holder: holderDID,
-      };
-
-      const created = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
-      const proofOptions: any = {
-        '@context': 'https://w3id.org/security/suites/ed25519-2020/v1',
-        type: 'Ed25519Signature2020',
-        created,
-        challenge: authRequest.nonce,
-        domain: authRequest.domain || authRequest.client_id,
-        verificationMethod: holderDID,
-        proofPurpose: 'authentication',
-      };
-
-      const allContextUrls = [
-        ...vpContext,
-        proofOptions['@context'],
-        ...rawCredentials.flatMap((c: any) =>
-          Array.isArray(c['@context']) ? c['@context'] : [c['@context']]
-        ),
-      ].filter((u): u is string => typeof u === 'string' && u.startsWith('http'));
-      await Promise.all([...new Set(allContextUrls)].map(fetchAndCache));
-
-      // Use native URDNA2015 canonicalization (same as Java/titanium) when available
-      let signingInput: Buffer;
-
-      if (Platform.OS !== 'web' && NativeModules.URDNA2015?.canonicalizeForSigning) {
-        console.log('[ShareVC] Using NATIVE canonicalization (titanium-compatible)');
-
-        // Build combined VP with proof
-        const combinedVp = {
-          '@context': vpContext,
-          type: ['VerifiablePresentation'],
-          verifiableCredential: rawCredentials,
-          id: vpId,
-          holder: holderDID,
-          proof: {
-            type: 'Ed25519Signature2020',
-            created,
-            verificationMethod: holderDID,
-            domain: authRequest.domain || authRequest.client_id,
-            challenge: authRequest.nonce,
-            proofPurpose: 'authentication',
-            proofValue: 'z_placeholder',
-          },
-        };
-
-        const combinedJson = JSON.stringify(combinedVp);
-        console.log('[ShareVC] Combined JSON length:', combinedJson.length);
-
-        const base64urlResult = await NativeModules.URDNA2015.canonicalizeForSigning(combinedJson);
-        // Decode base64url to Buffer (64 bytes: proofHash + docHash)
-        signingInput = Buffer.from(base64urlResult, 'base64');
-        console.log('[ShareVC] Native canonicalization result:', signingInput.length, 'bytes');
-      } else {
-        console.log('[ShareVC] Using JS canonicalization (jsonld lib fallback)');
-        let docNQuads: string;
-        let proofNQuads: string;
-        try {
-          console.log('[ShareVC] === Canonizing doc...');
-          docNQuads = await jsonld.canonize(vpBody, canonizeOpts);
-          console.log('[ShareVC] === Doc canonized, length:', docNQuads.length);
-        } catch (e: any) {
-          console.error('[ShareVC] === DOC CANONIZE FAILED:', e.message);
-          throw e;
-        }
-        try {
-          console.log('[ShareVC] === Canonizing proof...');
-          proofNQuads = await jsonld.canonize(proofOptions, canonizeOpts);
-          console.log('[ShareVC] === Proof canonized, length:', proofNQuads.length);
-        } catch (e: any) {
-          console.error('[ShareVC] === PROOF CANONIZE FAILED:', e.message);
-          throw e;
-        }
-
-        const docHash = sha256(Buffer.from(docNQuads, 'utf8'));
-        const proofHash = sha256(Buffer.from(proofNQuads, 'utf8'));
-        signingInput = Buffer.concat([Buffer.from(proofHash), Buffer.from(docHash)]);
+      if (!credential.proof?.type) {
+        throw new Error(`Cannot share VC "${vc.name ?? vc.id}": missing proof`);
       }
 
-      const signature = await ed.signAsync(signingInput, this.privateKey!);
-      const proofValue = 'z' + bs58.encode(signature);
+      const ED25519_CTX = 'https://w3id.org/security/suites/ed25519-2020/v1';
+      const ctx: string[] = Array.isArray(credential['@context'])
+        ? credential['@context']
+        : [credential['@context']].filter(Boolean);
+      if (!ctx.includes(ED25519_CTX)) ctx.push(ED25519_CTX);
+      credential['@context'] = ctx;
 
-      const { '@context': _ctx, ...proofWithoutContext } = proofOptions;
-
-      const vp: VP = {
-        ...vpBody,
-        proof: { ...proofWithoutContext, proofValue },
-        _credentialMapping: credentialMapping as any,
-      };
-
-      console.log('[ShareVC] VP constructed with Ed25519Signature2020');
-      return vp;
-
-    } catch (error) {
-      console.error('[ShareVC] Failed to construct VP:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Send Verifiable Presentation to verifier's redirect URI
-   */
-  async sendVerifiablePresentation(
-    vp: VP,
-    authRequest: AuthorizationRequest
-  ): Promise<ShareResult> {
-    try {
-      console.log('[ShareVC] Sending VP to verifier:', authRequest.redirect_uri);
-
-      const { _credentialMapping, ...vpToken } = vp as any;
-
-      const credentialMapping = _credentialMapping || [];
-      const descriptor_map = credentialMapping.map((item: any, index: number) => ({
-        id: item.inputDescriptorId,
-        format: 'ldp_vp',
-        path: `$.verifiableCredential[${index}]`,
-      }));
-
-      const responsePayload: Record<string, string> = {
-        vp_token: JSON.stringify(vpToken),
-        presentation_submission: JSON.stringify({
-          id: this.generateUUID(),
-          definition_id: authRequest.presentation_definition?.id || '',
-          descriptor_map,
-        }),
-      };
-
-      if (authRequest.state) responsePayload.state = authRequest.state;
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-      try {
-        const response = await fetch(authRequest.redirect_uri, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams(responsePayload).toString(),
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-
-        const responseBody = await response.text().catch(() => '');
-        console.log('[ShareVC] Response:', response.status, responseBody);
-
-        if (!response.ok) {
-          throw new Error(`Verifier error: ${response.status} ${response.statusText} - ${responseBody}`);
-        }
-
-        return { success: true, transactionId: vp.id ?? '' };
-
-      } catch (fetchError: any) {
-        clearTimeout(timeoutId);
-        throw new Error(`Network request failed: ${fetchError?.message || 'Unknown error'}`);
-      }
-
-    } catch (error) {
-      console.error('[ShareVC] Failed to send VP:', error);
-      return { success: false, transactionId: '', error: error instanceof Error ? error.message : 'Unknown error occurred' };
-    }
-  }
-
-  /**
-   * Generate UUID v4
-   */
-  private generateUUID(): string {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-      const r = Math.random() * 16 | 0;
-      const v = c === 'x' ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
+      return credential;
     });
+
+    const holderDID = this.buildHolderDID();
+    const vpId = `urn:uuid:${this.generateUUID()}`;
+    const vpContexts = [...new Set(
+      rawCredentials.flatMap((c: any) =>
+        Array.isArray(c['@context']) ? c['@context'] : [c['@context']]
+      ).filter(Boolean)
+    )];
+
+    const vpBody: any = {
+      '@context': vpContexts,
+      type: ['VerifiablePresentation'],
+      verifiableCredential: rawCredentials,
+      id: vpId,
+      holder: holderDID,
+    };
+
+    const created = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const proofOptions: any = {
+      '@context': 'https://w3id.org/security/suites/ed25519-2020/v1',
+      type: 'Ed25519Signature2020',
+      created,
+      challenge: authRequest.nonce,
+      domain: authRequest.domain ?? authRequest.client_id,
+      verificationMethod: holderDID,
+      proofPurpose: 'authentication',
+    };
+
+    const signingInput = await this.canonicalizeForSigning(vpBody, vpContexts, proofOptions, rawCredentials, holderDID, authRequest, created);
+    const signature = await ed.signAsync(signingInput, this.privateKey!);
+    const proofValue = 'z' + bs58.encode(signature);
+    const { '@context': _ctx, ...proofWithoutContext } = proofOptions;
+
+    return {
+      ...vpBody,
+      proof: { ...proofWithoutContext, proofValue },
+      _credentialMapping: credentialMapping,
+    } as any;
   }
 
-  /**
-   * Cleanup service
-   */
+  private async canonicalizeForSigning(
+    vpBody: any,
+    vpContexts: string[],
+    proofOptions: any,
+    rawCredentials: any[],
+    holderDID: string,
+    authRequest: AuthorizationRequest,
+    created: string,
+  ): Promise<Buffer> {
+    if (Platform.OS !== 'web' && NativeModules.URDNA2015?.canonicalizeForSigning) {
+      const combinedVp = {
+        ...vpBody,
+        proof: {
+          type: 'Ed25519Signature2020',
+          created,
+          verificationMethod: holderDID,
+          domain: authRequest.domain ?? authRequest.client_id,
+          challenge: authRequest.nonce,
+          proofPurpose: 'authentication',
+          proofValue: 'z_placeholder',
+        },
+      };
+      const result = await NativeModules.URDNA2015.canonicalizeForSigning(JSON.stringify(combinedVp));
+      return Buffer.from(result, 'base64');
+    }
+
+    const jsonld = require('jsonld');
+    const contextCache: Record<string, any> = {};
+
+    const fetchAndCache = async (url: string): Promise<any> => {
+      if (contextCache[url]) return contextCache[url];
+      const res = await fetch(url, { headers: { Accept: 'application/ld+json, application/json' }, redirect: 'follow' });
+      if (!res.ok) throw new Error(`HTTP ${res.status} fetching context: ${url}`);
+      const doc = await res.json();
+      contextCache[url] = doc;
+      const nested = (Array.isArray(doc['@context']) ? doc['@context'] : [doc['@context']])
+        .filter((c: any): c is string => typeof c === 'string' && c.startsWith('http'));
+      await Promise.all(nested.filter((u: string) => !contextCache[u]).map(fetchAndCache));
+      return doc;
+    };
+
+    jsonld.documentLoader = async (url: string) => {
+      const document = await fetchAndCache(url);
+      return { contextUrl: null, document, documentUrl: url };
+    };
+
+    const allUrls = [
+      ...vpContexts,
+      proofOptions['@context'],
+      ...rawCredentials.flatMap((c: any) => Array.isArray(c['@context']) ? c['@context'] : [c['@context']]),
+    ].filter((u): u is string => typeof u === 'string' && u.startsWith('http'));
+    await Promise.all([...new Set(allUrls)].map(fetchAndCache));
+
+    const opts = { algorithm: 'URDNA2015', format: 'application/n-quads', documentLoader: jsonld.documentLoader };
+    const docNQuads: string = await jsonld.canonize(vpBody, opts);
+    const proofNQuads: string = await jsonld.canonize(proofOptions, opts);
+
+    return Buffer.concat([Buffer.from(sha256(Buffer.from(proofNQuads, 'utf8'))), Buffer.from(sha256(Buffer.from(docNQuads, 'utf8')))]);
+  }
+
+  // ---------------------------------------------------------------------------
+  // vc+sd-jwt / dc+sd-jwt — KB-JWT presentation
+  // ---------------------------------------------------------------------------
+
+  private async buildSdJwtPresentation(
+    credentialMapping: Array<{ inputDescriptorId: string; vc: VC }>,
+    authRequest: AuthorizationRequest,
+    selectedDisclosuresByVcId?: Record<string, string[]>,
+  ): Promise<VP> {
+    await this.ensureKeyPair();
+
+    const tokens = await Promise.all(
+      credentialMapping.map(async ({ vc }) => {
+        const meta = vc.metadata as any;
+        const sdJwtCompact: string = meta?.sdJwtCompact;
+        if (!sdJwtCompact) throw new Error(`Missing sdJwtCompact for VC "${vc.name ?? vc.id}"`);
+
+        const selectedPaths = selectedDisclosuresByVcId?.[vc.id];
+        const filtered = filterSdJwtDisclosures(sdJwtCompact, selectedPaths, meta?.pathToDisclosures);
+
+        const kbJwt = await this.buildKbJwt(filtered, authRequest);
+        return filtered.endsWith('~') ? `${filtered}${kbJwt}` : `${filtered}~${kbJwt}`;
+      })
+    );
+
+    return {
+      id: `urn:uuid:${this.generateUUID()}`,
+      type: ['VerifiablePresentation'],
+      verifiableCredential: [],
+      proof: { type: 'kb-jwt' } as any,
+      holder: this.buildHolderDID(),
+      _sdJwtTokens: tokens,
+      _credentialMapping: credentialMapping,
+    } as any;
+  }
+
+  private async buildKbJwt(sdJwtCompact: string, authRequest: AuthorizationRequest): Promise<string> {
+    await this.ensureKeyPair();
+
+    const pubJwk = buildEdDsaJwk(this.publicKey!);
+    const holderDID = this.buildHolderDID();
+
+    const header = { alg: 'EdDSA', typ: 'kb+jwt', jwk: pubJwk };
+    const now = Math.floor(Date.now() / 1000);
+
+    // sd_hash = SHA-256 of the SD-JWT without KB-JWT (issuer_jwt~d1~d2~)
+    const sdHash = Buffer.from(sha256(Buffer.from(sdJwtCompact, 'utf8'))).toString('base64')
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+    const payload = {
+      iat: now,
+      aud: authRequest.client_id,
+      nonce: authRequest.nonce,
+      sd_hash: sdHash,
+      iss: holderDID,
+    };
+
+    const headerB64 = base64url(JSON.stringify(header));
+    const payloadB64 = base64url(JSON.stringify(payload));
+    const signingInput = Buffer.from(`${headerB64}.${payloadB64}`, 'utf8');
+    const sig = await ed.signAsync(signingInput, this.privateKey!);
+    const sigB64 = Buffer.from(sig).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+    return `${headerB64}.${payloadB64}.${sigB64}`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // mso_mdoc — DeviceResponse envelope (minimal, verifier-side decoding)
+  // ---------------------------------------------------------------------------
+
+  private async buildMdocPresentation(
+    credentialMapping: Array<{ inputDescriptorId: string; vc: VC }>,
+    authRequest: AuthorizationRequest,
+  ): Promise<VP> {
+    // mso_mdoc DeviceResponse is the raw base64url CBOR from the issuer.
+    // The SDK passes it through as-is; the verifier decodes CBOR natively.
+    const tokens = credentialMapping.map(({ vc }) => {
+      const meta = vc.metadata as any;
+      const mdocData: string = meta?.mdocData;
+      if (!mdocData) throw new Error(`Missing mdocData for VC "${vc.name ?? vc.id}"`);
+      return mdocData;
+    });
+
+    return {
+      id: `urn:uuid:${this.generateUUID()}`,
+      type: ['VerifiablePresentation'],
+      verifiableCredential: [],
+      proof: { type: 'mso_mdoc' } as any,
+      holder: '',
+      _mdocTokens: tokens,
+      _credentialMapping: credentialMapping,
+    } as any;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Send presentation — handles all formats
+  // ---------------------------------------------------------------------------
+
+  async sendVerifiablePresentation(vp: VP, authRequest: AuthorizationRequest): Promise<ShareResult> {
+    const vpAny = vp as any;
+    const credentialMapping: Array<{ inputDescriptorId: string; vc: VC }> = vpAny._credentialMapping ?? [];
+
+    let vpToken: string;
+    let descriptorFormat: string;
+    let descriptorPath: string;
+
+    if (vpAny._sdJwtTokens) {
+      // SD-JWT: vp_token is a single string (first) or JSON array (multiple)
+      const tokens: string[] = vpAny._sdJwtTokens;
+      vpToken = tokens.length === 1 ? tokens[0] : JSON.stringify(tokens);
+      descriptorFormat = vcFormat(credentialMapping[0]?.vc) ?? 'vc+sd-jwt';
+      descriptorPath = tokens.length === 1 ? '$' : '$[0]';
+    } else if (vpAny._mdocTokens) {
+      const tokens: string[] = vpAny._mdocTokens;
+      vpToken = tokens.length === 1 ? tokens[0] : JSON.stringify(tokens);
+      descriptorFormat = 'mso_mdoc';
+      descriptorPath = '$';
+    } else {
+      // ldp_vc VP
+      const { _credentialMapping: _cm, ...vpToken_ } = vpAny;
+      vpToken = JSON.stringify(vpToken_);
+      descriptorFormat = 'ldp_vp';
+      descriptorPath = '$.verifiableCredential[0]';
+    }
+
+    const descriptor_map = credentialMapping.map((item, index) => ({
+      id: item.inputDescriptorId,
+      format: descriptorFormat,
+      path: vpAny._sdJwtTokens && credentialMapping.length > 1
+        ? `$[${index}]`
+        : descriptorPath,
+    }));
+
+    const body: Record<string, string> = {
+      vp_token: vpToken,
+      presentation_submission: JSON.stringify({
+        id: this.generateUUID(),
+        definition_id: authRequest.presentation_definition?.id ?? '',
+        descriptor_map,
+      }),
+    };
+    if (authRequest.state) body.state = authRequest.state;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+    try {
+      const response = await fetch(authRequest.redirect_uri, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(body).toString(),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      const responseBody = await response.text().catch(() => '');
+      if (!response.ok) throw new Error(`Verifier error: ${response.status} - ${responseBody}`);
+
+      return { success: true, transactionId: vp.id ?? '' };
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      return { success: false, transactionId: '', error: err?.message ?? 'Unknown error' };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cleanup
+  // ---------------------------------------------------------------------------
+
   async cleanup(): Promise<void> {
     this.credentialService = null;
     this.privateKey = null;
     this.publicKey = null;
-    console.log('[ShareVC] Service cleaned up');
   }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
+
+  private async ensureKeyPair(): Promise<void> {
+    if (!this.privateKey) {
+      this.privateKey = ed.utils.randomPrivateKey();
+      this.publicKey = await ed.getPublicKeyAsync(this.privateKey);
+    }
+  }
+
+  private buildHolderDID(): string {
+    const jwk = buildEdDsaJwk(this.publicKey!);
+    return `did:jwk:${base64url(JSON.stringify(jwk))}#0`;
+  }
+
+  private generateUUID(): string {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Module-level helpers
+// ---------------------------------------------------------------------------
+
+function parseQueryString(url: string): Record<string, string> {
+  const idx = url.indexOf('?');
+  if (idx === -1) return {};
+  return url.slice(idx + 1).split('&').reduce<Record<string, string>>((acc, pair) => {
+    const [k, v] = pair.split('=').map(decodeURIComponent);
+    if (k) acc[k] = v ?? '';
+    return acc;
+  }, {});
+}
+
+function base64url(input: string | Uint8Array): string {
+  const b = typeof input === 'string' ? Buffer.from(input, 'utf8') : Buffer.from(input);
+  return b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+function buildEdDsaJwk(publicKey: Uint8Array): Record<string, string> {
+  return {
+    kty: 'OKP',
+    crv: 'Ed25519',
+    x: base64url(publicKey),
+  };
+}
+
+/**
+ * Filters SD-JWT disclosures to only those matching selectedPaths.
+ * If selectedPaths is undefined/empty, returns the original compact (all disclosures).
+ * pathToDisclosures: { "$.cpf": ["disc_hash"], ... } — built by CredentialService.
+ */
+function filterSdJwtDisclosures(
+  sdJwtCompact: string,
+  selectedPaths: string[] | undefined,
+  pathToDisclosures: Record<string, string[]> | undefined,
+): string {
+  const parts = sdJwtCompact.split('~');
+  const jwt = parts[0];
+
+  // No selection = send all disclosures (backward-compatible)
+  if (!selectedPaths?.length || !pathToDisclosures) {
+    return sdJwtCompact;
+  }
+
+  const keep = new Set<string>();
+  for (const path of selectedPaths) {
+    const discs = pathToDisclosures[path];
+    if (discs) discs.forEach(d => keep.add(d));
+  }
+
+  // Preserve only selected disclosures; always end with '~'
+  const filtered = [jwt, ...keep].join('~') + '~';
+  return filtered;
 }

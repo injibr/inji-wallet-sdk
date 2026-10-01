@@ -21,7 +21,7 @@ export interface VP {
 }
 
 export interface CredentialSubject {
-  id: string;
+  id?: string;
   [key: string]: any;
 }
 

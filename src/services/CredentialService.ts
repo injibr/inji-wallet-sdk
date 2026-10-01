@@ -4,18 +4,21 @@ import { AuthService } from './AuthService';
 import { VCVerifier } from '../utils/crypto/VCVerifier';
 import { AuthIntegrationService } from './AuthIntegrationService';
 import { Buffer } from 'buffer';
+import { NativeModules, NativeEventEmitter } from 'react-native';
+
+const SD_JWT_FORMATS = ['vc+sd-jwt', 'dc+sd-jwt'] as const;
+type SdJwtFormat = (typeof SD_JWT_FORMATS)[number];
+const isSdJwt = (f: string): f is SdJwtFormat => SD_JWT_FORMATS.includes(f as SdJwtFormat);
 
 export class CredentialService {
   private config: VCSDKConfig;
   private storageService: StorageService | null = null;
   private authService: AuthService | null = null;
   private vcVerifier: VCVerifier;
-  private uid: { rnd: (length?: number) => string };
 
   constructor(config: VCSDKConfig) {
     this.config = config;
     this.vcVerifier = new VCVerifier();
-    this.uid = { rnd: (length = 16) => this.generateId(length) };
   }
 
   async init(storageService: StorageService, authService: AuthService): Promise<void> {
@@ -24,24 +27,18 @@ export class CredentialService {
   }
 
   async getAll(): Promise<VC[]> {
-    return this.getCredentials();
-  }
-
-  async getCredentials(): Promise<VC[]> {
-    if (!this.storageService) throw new Error('Storage service not initialized');
+    if (!this.storageService) throw new Error('Storage not initialized');
     return this.storageService.getCredentials();
   }
 
   async getCredential(vcId: string): Promise<VC> {
-    if (!this.storageService) throw new Error('Storage service not initialized');
+    if (!this.storageService) throw new Error('Storage not initialized');
     return this.storageService.getCredential(vcId);
   }
 
   async deleteCredential(vcId: string): Promise<boolean> {
-    if (!this.storageService) throw new Error('Storage service not initialized');
-    const success = await this.storageService.deleteCredential(vcId);
-    if (success) console.log(`[CredentialService] Deleted: ${vcId}`);
-    return success;
+    if (!this.storageService) throw new Error('Storage not initialized');
+    return this.storageService.deleteCredential(vcId);
   }
 
   async verifyCredential(vc: VC): Promise<VerificationResult> {
@@ -50,7 +47,7 @@ export class CredentialService {
     } catch (error) {
       return {
         isValid: false,
-        errors: [error instanceof Error ? error.message : 'Unknown verification error'],
+        errors: [error instanceof Error ? error.message : 'Unknown error'],
         warnings: [],
         issuerTrusted: false,
         signatureValid: false,
@@ -65,179 +62,65 @@ export class CredentialService {
     progressCallback?: (progress: string) => void,
     accessToken?: string,
   ): Promise<VC> {
-    if (!this.storageService) throw new Error('Storage service not initialized');
-
-    console.log('[CredentialService] requestAndDownload start', { issuerId: issuer?.id, credentialTypeId: credentialType?.id, format: credentialType?.format });
-    progressCallback?.('Initiating credential request...');
-
-    const vcId = this.uid.rnd();
-    const fullCredentialEndpoint = issuer.credential_endpoint || `${issuer.issuerUrl}/v1/certify/issuance/credential`;
-    console.log('[CredentialService] Credential endpoint:', fullCredentialEndpoint);
+    if (!this.storageService) throw new Error('Storage not initialized');
 
     progressCallback?.('Getting access token...');
+    const token = accessToken || (await AuthIntegrationService.getAccessToken());
+    if (!token) throw new Error('No access token available. User must be authenticated.');
 
-    const resolvedToken = accessToken || await AuthIntegrationService.getAccessToken();
-    if (!resolvedToken) {
-      console.error('[CredentialService] No access token available');
-      throw new Error('No access token available. User must be authenticated.');
-    }
-    console.log('[CredentialService] Access token resolved, length:', resolvedToken.length);
+    const format: string = credentialType.format ?? credentialType.fullConfig?.format ?? 'ldp_vc';
+    const endpoint = issuer.credential_endpoint ?? `${issuer.issuerUrl}/v1/certify/issuance/credential`;
+    const proof = { proof_type: 'jwt', jwt: await this.buildJWTProof(token, issuer) };
 
-    const isMsoMdoc = credentialType.format === 'mso_mdoc' || credentialType.fullConfig?.format === 'mso_mdoc';
-    console.log('[CredentialService] Format:', isMsoMdoc ? 'mso_mdoc' : 'ldp_vc');
+    progressCallback?.('Building request...');
+    const payload = this.buildRequestPayload(format, credentialType, proof);
 
-    let requestPayload: any;
-    let credentialContext: string[] | undefined;
+    progressCallback?.('Requesting credential...');
+    const raw = await this.postCredential(endpoint, token, payload);
 
-    if (isMsoMdoc) {
-      requestPayload = {
-        format: 'mso_mdoc',
-        doctype: credentialType.doctype || credentialType.fullConfig?.doctype || credentialType.id,
-        proof: {
-          proof_type: 'jwt',
-          jwt: await this.generateProperJWTProof(resolvedToken, issuer),
-        },
-      };
-    } else {
-      const credentialTypes = credentialType.credentialDefinitionTypes?.length > 0
-        ? credentialType.credentialDefinitionTypes
-        : ['VerifiableCredential', credentialType.id];
+    progressCallback?.('Processing response...');
+    const credential = this.buildVC(this.generateId(), format, raw, issuer, credentialType);
 
-      credentialContext = credentialType.fullConfig?.credential_definition?.['@context'];
-      if (!credentialContext?.length) {
-        throw new Error(`Missing @context in credential_definition for type: ${credentialType.id}`);
-      }
-
-      requestPayload = {
-        format: 'ldp_vc',
-        credential_definition: { type: credentialTypes, '@context': credentialContext },
-        proof: {
-          proof_type: 'jwt',
-          jwt: await this.generateProperJWTProof(resolvedToken, issuer),
-        },
-        doctype: credentialType.id,
-        issuerId: issuer.id,
-      };
-    }
-
-    console.log('[CredentialService] Request payload:', JSON.stringify(requestPayload));
-    progressCallback?.('Making authenticated API request...');
-
-    const headers = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'Authorization': `Bearer ${resolvedToken}`,
-    };
-
-    const response = await fetch(fullCredentialEndpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(requestPayload),
-    });
-
-    const responseData = await response.text();
-    console.log('[CredentialService] Response status:', response.status, '| body length:', responseData.length);
-    console.log('[CredentialService] Response body:', responseData);
-
-    if (!response.ok) {
-      if (response.status === 424) {
-        console.warn('[CredentialService] 424 - credential not available at provider');
-        const error424 = Object.assign(new Error('CREDENTIAL_NOT_AVAILABLE_424'), { statusCode: 424, credentialType });
-        throw error424;
-      }
-      console.error('[CredentialService] API error:', response.status, responseData);
-      throw new Error(`Credential API request failed: ${response.status} ${response.statusText} - ${responseData}`);
-    }
-
-    let credentialResponse: any;
-    try {
-      credentialResponse = JSON.parse(responseData);
-    } catch {
-      throw new Error(`Invalid JSON response from credential endpoint: ${responseData}`);
-    }
-
-    progressCallback?.('Processing credential response...');
-    console.log('[CredentialService] Parsed credential response keys:', Object.keys(credentialResponse));
-
-    const receivedCredential = credentialResponse.credential || credentialResponse;
-
-    if (isMsoMdoc) {
-      const mdocString = typeof receivedCredential === 'string' ? receivedCredential : credentialResponse.credential;
-      if (!mdocString || typeof mdocString !== 'string') {
-        throw new Error('Invalid mso_mdoc response: expected base64url string');
-      }
-      const credential: VC = {
-        id: vcId,
-        type: ['mso_mdoc', credentialType.doctype || credentialType.fullConfig?.doctype || credentialType.id],
-        name: credentialType.name || credentialType.id,
-        issuer: issuer.issuerUrl || issuer.id,
-        issuanceDate: new Date().toISOString(),
-        credentialSubject: {},
-        proof: { type: 'mso_mdoc' } as any,
-        metadata: {
-          addedDate: new Date().toISOString(),
-          lastAccessed: new Date().toISOString(),
-          isPinned: false,
-          tags: [],
-          issuerInfo: issuer,
-          credentialType,
-          downloadedAt: new Date().toISOString(),
-          source: 'inji_endpoint',
-          mdocData: mdocString,
-          originalResponse: credentialResponse,
-        } as any,
-      };
-      await this.storageService.storeCredential(credential);
-      progressCallback?.('Credential downloaded successfully');
-      return credential;
-    }
-
-    console.log('[CredentialService] Validating proof on received credential...');
-    if (!receivedCredential.proof) {
-      console.error('[CredentialService] No proof on credential:', JSON.stringify(receivedCredential).slice(0, 300));
-      throw new Error('Invalid credential: No proof signature from issuer.');
-    }
-    if (!receivedCredential.proof.type) {
-      console.error('[CredentialService] Proof missing type:', receivedCredential.proof);
-      throw new Error('Invalid proof: Missing proof type');
-    }
-    if (!receivedCredential.proof.proofValue && !receivedCredential.proof.jws) {
-      console.error('[CredentialService] Proof missing signature:', receivedCredential.proof);
-      throw new Error('Invalid proof: Missing signature (proofValue or jws)');
-    }
-    console.log('[CredentialService] Proof valid, type:', receivedCredential.proof.type);
-
-    const credential: VC = {
-      id: vcId,
-      type: receivedCredential.type || [credentialType.id, 'VerifiableCredential'],
-      name: credentialType.name || credentialType.id,
-      issuer: receivedCredential.issuer || issuer.issuerUrl || issuer.id,
-      issuanceDate: receivedCredential.issuanceDate || new Date().toISOString(),
-      expirationDate: receivedCredential.expirationDate,
-      credentialSubject: receivedCredential.credentialSubject || {},
-      proof: receivedCredential.proof,
-      '@context': receivedCredential['@context'] || credentialContext,
-      metadata: {
-        addedDate: new Date().toISOString(),
-        lastAccessed: new Date().toISOString(),
-        isPinned: false,
-        tags: [],
-        issuerInfo: issuer,
-        credentialType,
-        downloadedAt: new Date().toISOString(),
-        source: 'inji_endpoint',
-        originalResponse: credentialResponse,
-        originalCredential: receivedCredential,
-      } as any,
-    };
-
-    console.log('[CredentialService] Validating and storing credential id:', vcId);
-    await this.validateCredential(credential);
+    if (format === 'ldp_vc') await this.validateLdpVc(credential);
     await this.storageService.storeCredential(credential);
-
-    progressCallback?.('Credential downloaded successfully');
-    console.log('[CredentialService] requestAndDownload complete, id:', vcId);
+    progressCallback?.('Done.');
     return credential;
+  }
+
+  async downloadFromOffer(
+    credentialOfferUrl: string,
+    clientId: string,
+    redirectUri: string,
+    progressCallback?: (progress: string) => void,
+  ): Promise<VC> {
+    if (!this.storageService) throw new Error('Storage not initialized');
+    const { InjiVciClient } = NativeModules;
+    if (!InjiVciClient) throw new Error('InjiVciClient native module not available');
+
+    const emitter = new NativeEventEmitter(InjiVciClient);
+    const listeners = VCI_EVENTS.map(name =>
+      emitter.addListener(name, (data: any) => {
+        progressCallback?.(`VCI: ${name}`);
+        console.log(`[CredentialService] VCI ${name}`, data);
+      })
+    );
+
+    try {
+      progressCallback?.('Requesting credential from offer...');
+      const responseJson: string = await InjiVciClient.requestCredentialByOffer(
+        credentialOfferUrl,
+        JSON.stringify({ clientId, redirectUri }),
+        'JsonWebSignature2020',
+      );
+
+      const { credential: raw, credentialConfigurationId = '', credentialIssuer = '' } = JSON.parse(responseJson);
+      const credential = this.buildVCFromRaw(this.generateId(), raw, credentialConfigurationId, credentialIssuer);
+      await this.storageService.storeCredential(credential);
+      progressCallback?.('Done.');
+      return credential;
+    } finally {
+      listeners.forEach(l => l.remove());
+    }
   }
 
   async cleanup(): Promise<void> {
@@ -245,53 +128,256 @@ export class CredentialService {
     this.authService = null;
   }
 
-  private async generateProperJWTProof(accessToken: string, issuer: any): Promise<string> {
-    let decodedToken: any = null;
-    try {
-      const parts = accessToken?.split('.');
-      if (parts?.length === 3) {
-        const p = parts[1];
-        decodedToken = JSON.parse(Buffer.from(p + '='.repeat(4 - p.length % 4), 'base64').toString());
-      }
-    } catch (_) {}
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
 
-    const cNonce = decodedToken?.c_nonce || decodedToken?.nonce || null;
-    const clientId = issuer.client_id || decodedToken?.aud || 'h-credenciaisverificaveis-dev.dataprev.gov.br';
-    const audience = issuer.credential_issuer || issuer.credentialIssuer || 'https://vcdemo.crabdance.com/certify';
+  private buildRequestPayload(format: string, credentialType: any, proof: any): any {
+    if (format === 'mso_mdoc') {
+      return {
+        format: 'mso_mdoc',
+        doctype: credentialType.doctype ?? credentialType.fullConfig?.doctype ?? credentialType.id,
+        proof,
+      };
+    }
 
-    console.log('[CredentialService] generateProperJWTProof', { clientId, audience, hasCNonce: !!cNonce });
+    if (isSdJwt(format)) {
+      return {
+        format,
+        vct: credentialType.vct ?? credentialType.fullConfig?.vct ?? credentialType.id,
+        proof,
+      };
+    }
 
-    const now = Math.floor(Date.now() / 1000);
-    const payload: any = { iss: clientId, aud: audience, iat: now, exp: now + 18000 };
-    if (cNonce) payload.nonce = cNonce;
+    // ldp_vc
+    const types = credentialType.credentialDefinitionTypes?.length
+      ? credentialType.credentialDefinitionTypes
+      : ['VerifiableCredential', credentialType.id];
 
-    console.log('[CredentialService] JWT proof payload:', JSON.stringify(payload));
+    const context = credentialType.fullConfig?.credential_definition?.['@context'];
+    if (!context?.length) throw new Error(`Missing @context for type: ${credentialType.id}`);
 
-    const { nativeCryptoJWT } = require('./NativeCryptoJWT');
-    const jwt = nativeCryptoJWT.createJWT(payload);
-    console.log('[CredentialService] JWT proof created, length:', jwt?.length);
-    return jwt;
+    return {
+      format: 'ldp_vc',
+      credential_definition: { type: types, '@context': context },
+      proof,
+      doctype: credentialType.id,
+      issuerId: credentialType.issuerId,
+    };
   }
 
-  private async validateCredential(credential: VC): Promise<void> {
-    if (!credential.id) throw new Error('Credential must have an ID');
-    if (!credential.type) throw new Error('Credential must have a type');
-    if (!credential.issuer) throw new Error('Credential must have an issuer');
-    if (!credential.credentialSubject) throw new Error('Credential must have a credential subject');
+  private async postCredential(endpoint: string, token: string, payload: any): Promise<any> {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
 
-    new Date(credential.issuanceDate); // throws if invalid
+    const body = await response.text();
 
-    if (credential.expirationDate) {
-      const exp = new Date(credential.expirationDate);
-      const iss = new Date(credential.issuanceDate);
-      if (exp <= iss) throw new Error('Expiration date must be after issuance date');
+    if (!response.ok) {
+      if (response.status === 424) {
+        throw Object.assign(new Error('CREDENTIAL_NOT_AVAILABLE_424'), { statusCode: 424 });
+      }
+      throw new Error(`Credential request failed: ${response.status} - ${body}`);
+    }
+
+    try {
+      return JSON.parse(body);
+    } catch {
+      throw new Error(`Invalid JSON from credential endpoint: ${body}`);
     }
   }
 
-  private generateId(length: number): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let result = '';
-    for (let i = 0; i < length; i++) result += chars[Math.floor(Math.random() * chars.length)];
-    return result;
+  private buildVC(id: string, format: string, response: any, issuer: any, credentialType: any): VC {
+    const raw = response.credential ?? response;
+    const now = new Date().toISOString();
+    const baseMeta = {
+      addedDate: now,
+      lastAccessed: now,
+      isPinned: false,
+      tags: [],
+      issuerInfo: issuer,
+      credentialType,
+      downloadedAt: now,
+      source: 'inji_endpoint',
+      originalResponse: response,
+    };
+
+    if (format === 'mso_mdoc') {
+      if (typeof raw !== 'string') throw new Error('Invalid mso_mdoc: expected base64url string');
+      return {
+        id, name: credentialType.name ?? credentialType.id,
+        type: ['mso_mdoc', credentialType.doctype ?? credentialType.id],
+        issuer: issuer.issuerUrl ?? issuer.id,
+        issuanceDate: now,
+        credentialSubject: {},
+        proof: { type: 'mso_mdoc' } as any,
+        metadata: { ...baseMeta, mdocData: raw } as any,
+      };
+    }
+
+    if (isSdJwt(format)) {
+      if (typeof raw !== 'string') throw new Error(`Invalid ${format}: expected compact SD-JWT string`);
+      const claims = decodeSdJwtPayload(raw);
+      return {
+        id, name: credentialType.name ?? credentialType.id,
+        type: [format, credentialType.vct ?? credentialType.id],
+        issuer: claims.iss ?? issuer.issuerUrl ?? issuer.id,
+        issuanceDate: claims.iat ? new Date(claims.iat * 1000).toISOString() : now,
+        expirationDate: claims.exp ? new Date(claims.exp * 1000).toISOString() : undefined,
+        credentialSubject: claims,
+        proof: { type: format } as any,
+        metadata: { ...baseMeta, sdJwtCompact: raw, pathToDisclosures: buildPathToDisclosures(raw) } as any,
+      };
+    }
+
+    // ldp_vc
+    if (!raw.proof?.type) throw new Error('Invalid credential: missing proof');
+    if (!raw.proof.proofValue && !raw.proof.jws) throw new Error('Invalid proof: missing signature');
+    return {
+      id, name: credentialType.name ?? credentialType.id,
+      type: raw.type ?? [credentialType.id, 'VerifiableCredential'],
+      issuer: raw.issuer ?? issuer.issuerUrl ?? issuer.id,
+      issuanceDate: raw.issuanceDate ?? now,
+      expirationDate: raw.expirationDate,
+      credentialSubject: raw.credentialSubject ?? {},
+      proof: raw.proof,
+      '@context': raw['@context'],
+      metadata: { ...baseMeta, originalCredential: raw } as any,
+    };
   }
+
+  private buildVCFromRaw(id: string, raw: any, configId: string, credentialIssuer: string): VC {
+    const now = new Date().toISOString();
+    const baseMeta = {
+      addedDate: now, lastAccessed: now, isPinned: false, tags: [],
+      downloadedAt: now, source: 'credential_offer', credentialConfigurationId: configId,
+      originalResponse: raw,
+    };
+
+    if (typeof raw === 'string' && raw.includes('~')) {
+      const claims = decodeSdJwtPayload(raw);
+      return {
+        id, name: configId,
+        type: ['vc+sd-jwt', configId],
+        issuer: claims.iss ?? credentialIssuer,
+        issuanceDate: claims.iat ? new Date(claims.iat * 1000).toISOString() : now,
+        expirationDate: claims.exp ? new Date(claims.exp * 1000).toISOString() : undefined,
+        credentialSubject: claims,
+        proof: { type: 'vc+sd-jwt' } as any,
+        metadata: { ...baseMeta, sdJwtCompact: raw, pathToDisclosures: buildPathToDisclosures(raw) } as any,
+      };
+    }
+
+    if (typeof raw === 'string') {
+      return {
+        id, name: configId,
+        type: ['mso_mdoc', configId],
+        issuer: credentialIssuer,
+        issuanceDate: now,
+        credentialSubject: {},
+        proof: { type: 'mso_mdoc' } as any,
+        metadata: { ...baseMeta, mdocData: raw } as any,
+      };
+    }
+
+    return {
+      id, name: configId,
+      type: raw.type ?? ['VerifiableCredential', configId],
+      issuer: raw.issuer ?? credentialIssuer,
+      issuanceDate: raw.issuanceDate ?? now,
+      expirationDate: raw.expirationDate,
+      credentialSubject: raw.credentialSubject ?? {},
+      proof: raw.proof,
+      '@context': raw['@context'],
+      metadata: { ...baseMeta, originalCredential: raw } as any,
+    };
+  }
+
+  private async validateLdpVc(credential: VC): Promise<void> {
+    if (!credential.id) throw new Error('Credential must have an ID');
+    if (!credential.type) throw new Error('Credential must have a type');
+    if (!credential.issuer) throw new Error('Credential must have an issuer');
+    if (!credential.credentialSubject) throw new Error('Credential must have a credentialSubject');
+    new Date(credential.issuanceDate);
+    if (credential.expirationDate && new Date(credential.expirationDate) <= new Date(credential.issuanceDate)) {
+      throw new Error('Expiration date must be after issuance date');
+    }
+  }
+
+  private async buildJWTProof(accessToken: string, issuer: any): Promise<string> {
+    let decoded: any = null;
+    try {
+      const p = accessToken.split('.')[1];
+      decoded = JSON.parse(Buffer.from(p + '='.repeat(4 - p.length % 4), 'base64').toString());
+    } catch (_) {}
+
+    const now = Math.floor(Date.now() / 1000);
+    const payload: any = {
+      iss: issuer.client_id ?? decoded?.aud ?? 'h-credenciaisverificaveis-dev.dataprev.gov.br',
+      aud: issuer.credential_issuer ?? issuer.credentialIssuer ?? 'https://vcdemo.crabdance.com/certify',
+      iat: now,
+      exp: now + 18000,
+    };
+    if (decoded?.c_nonce ?? decoded?.nonce) payload.nonce = decoded.c_nonce ?? decoded.nonce;
+
+    const { nativeCryptoJWT } = require('./NativeCryptoJWT');
+    return nativeCryptoJWT.createJWT(payload);
+  }
+
+  private generateId(length = 16): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    return Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Module-level helpers
+// ---------------------------------------------------------------------------
+
+const VCI_EVENTS = [
+  'onRequestAuthCode', 'onRequestProof', 'onRequestTokenResponse',
+  'onRequestTxCode', 'onCheckIssuerTrust', 'onPresentationRequest', 'onRequestSignedVPToken',
+];
+
+function decodeSdJwtPayload(compact: string): Record<string, any> {
+  try {
+    const p = compact.split('~')[0].split('.')[1];
+    return JSON.parse(Buffer.from(p + '='.repeat(4 - p.length % 4), 'base64').toString());
+  } catch (_) {
+    return {};
+  }
+}
+
+/**
+ * Parses SD-JWT disclosures and builds a map of claim path → disclosure hash(es).
+ * Each disclosure is base64url(json([salt, key, value])) or base64url(json([salt, value])).
+ * Returns: { "$.cpf": ["disc_hash"], "$.address": ["disc_hash"], ... }
+ */
+export function buildPathToDisclosures(compact: string): Record<string, string[]> {
+  const parts = compact.split('~').filter(Boolean);
+  // parts[0] is the JWT; rest are disclosures (last may be KB-JWT if it has 2 dots)
+  const disclosureParts = parts.slice(1).filter(p => p.split('.').length < 3);
+
+  const map: Record<string, string[]> = {};
+
+  for (const disc of disclosureParts) {
+    try {
+      const pad = disc + '='.repeat(4 - disc.length % 4);
+      const decoded: any[] = JSON.parse(Buffer.from(pad, 'base64').toString());
+      // [salt, key, value] = object claim; [salt, value] = array element
+      if (decoded.length === 3 && typeof decoded[1] === 'string') {
+        const path = `$.${decoded[1]}`;
+        if (!map[path]) map[path] = [];
+        map[path].push(disc);
+      }
+    } catch (_) {}
+  }
+
+  return map;
 }

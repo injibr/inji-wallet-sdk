@@ -219,6 +219,36 @@ export class VCSDKCoreHeadless {
       },
 
       /**
+       * Download a credential from a credential offer URL (QR / deep link)
+       * Requires InjiVciClient native module.
+       * Host app must handle VCI events (onRequestAuthCode, onRequestProof, etc.)
+       * by calling the corresponding NativeModules.InjiVciClient.sendXxxFromJS methods.
+       * Emits: credential:downloadStarted, credential:downloadComplete, credential:downloadError
+       */
+      downloadFromOffer: async (
+        credentialOfferUrl: string,
+        clientId: string,
+        redirectUri: string,
+      ): Promise<VC | null> => {
+        this.ensureInitialized();
+        try {
+          this.events.emitCredentialDownloadStarted({ id: 'offer', name: credentialOfferUrl }, null);
+          const credential = await this.services!.credential.downloadFromOffer(
+            credentialOfferUrl,
+            clientId,
+            redirectUri,
+            (progress: string) => this.events.emitCredentialDownloadProgress(0, 100, 50, progress),
+          );
+          this.events.emitCredentialDownloadComplete(credential, null, null);
+          this.events.emitCredentialListUpdated(await this.services!.credential.getAll());
+          return credential;
+        } catch (error: any) {
+          this.events.emitCredentialDownloadError(error, null, null, error.statusCode);
+          throw error;
+        }
+      },
+
+      /**
        * Delete a credential
        * Emits: credential:deleted, credential:listUpdated
        */
@@ -526,7 +556,11 @@ export class VCSDKCoreHeadless {
        * Complete the share flow after user grants consent
        * Emits: share:sharingStarted, share:sharingProgress, share:sharingComplete, share:error
        */
-      completeShare: async (authRequest: any, requestedCredentials: any[]): Promise<{
+      completeShare: async (
+        authRequest: any,
+        requestedCredentials: any[],
+        selectedDisclosuresByVcId?: Record<string, string[]>,
+      ): Promise<{
         success: boolean;
         protocolNumber?: string;
       }> => {
@@ -578,7 +612,11 @@ export class VCSDKCoreHeadless {
           this.events.emitShareSharingProgress('Creating verifiable presentation...');
 
           // Construct verifiable presentation
-          const vp = await this.services!.shareVC.constructVerifiablePresentation(matchedCreds, authRequest);
+          const vp = await this.services!.shareVC.constructVerifiablePresentation(
+            matchedCreds,
+            authRequest,
+            selectedDisclosuresByVcId,
+          );
 
           this.events.emitShareSharingProgress('Sending to verifier...');
 

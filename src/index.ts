@@ -44,4 +44,3 @@ export { notificationService } from './services/NotificationService';
 
 // Utils (for advanced users)
 export * from './utils/VCDisplayUtils';
-export * from './platform';

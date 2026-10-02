@@ -50,62 +50,31 @@ export class VCSDKCoreHeadless {
     try {
       console.log('[VCSDKHeadless] Initializing...');
 
-      // Deep merge config with defaults
-      const defaultConfig = {
-        environment: 'production' as const,
-        storage: {
-          encrypted: true,
-          backup: {
-            provider: 'icloud' as const,
-            automatic: true,
-            schedule: 'daily' as const,
-            encryptBackups: true,
-          },
-        },
-        network: {
-          baseUrl: 'https://vcdemo.crabdance.com',
-          timeout: 30000,
-          retries: 3,
-        },
-      };
+      const defaultBackup = { provider: 'icloud' as const, automatic: true, schedule: 'daily' as const, encryptBackups: true };
+      const defaultNetwork = { baseUrl: 'https://vcdemo.crabdance.com', timeout: 30000, retries: 3 };
 
-      // Build storage config
-      const storageConfig: any = {
-        encrypted: config.storage?.encrypted !== undefined ? config.storage.encrypted : defaultConfig.storage.encrypted,
-      };
-
-      // Build backup config
-      if (config.storage?.backup) {
-        storageConfig.backup = {
-          provider: config.storage.backup.provider || defaultConfig.storage.backup.provider,
-          automatic: config.storage.backup.automatic !== undefined ? config.storage.backup.automatic : defaultConfig.storage.backup.automatic,
-          schedule: config.storage.backup.schedule || defaultConfig.storage.backup.schedule,
-          encryptBackups: config.storage.backup.encryptBackups !== undefined ? config.storage.backup.encryptBackups : defaultConfig.storage.backup.encryptBackups,
-        };
-      } else {
-        storageConfig.backup = defaultConfig.storage.backup;
-      }
-
-      // Build network config
-      const networkConfig: any = {
-        baseUrl: config.network?.baseUrl || defaultConfig.network.baseUrl,
-        timeout: config.network?.timeout || defaultConfig.network.timeout,
-        retries: config.network?.retries || defaultConfig.network.retries,
-      };
-
-      if (config.network?.notificationBaseUrl) {
-        networkConfig.notificationBaseUrl = config.network.notificationBaseUrl;
-      }
-
-      if (config.network?.oauth) {
-        networkConfig.oauth = config.network.oauth;
-      }
+      const inBackup = config.storage?.backup;
+      const resolvedBackup = inBackup ? {
+        provider: inBackup.provider ?? defaultBackup.provider,
+        automatic: inBackup.automatic ?? defaultBackup.automatic,
+        schedule: inBackup.schedule ?? defaultBackup.schedule,
+        encryptBackups: inBackup.encryptBackups ?? defaultBackup.encryptBackups,
+      } : defaultBackup;
 
       this.config = {
         appId: config.appId,
-        environment: config.environment || defaultConfig.environment,
-        storage: storageConfig,
-        network: networkConfig,
+        environment: config.environment ?? 'production',
+        storage: {
+          encrypted: config.storage?.encrypted ?? true,
+          backup: resolvedBackup,
+        },
+        network: {
+          baseUrl: config.network?.baseUrl || defaultNetwork.baseUrl,
+          timeout: config.network?.timeout || defaultNetwork.timeout,
+          retries: config.network?.retries || defaultNetwork.retries,
+          ...(config.network?.notificationBaseUrl && { notificationBaseUrl: config.network.notificationBaseUrl }),
+          ...(config.network?.oauth && { oauth: config.network.oauth }),
+        },
       };
 
       // Configure notification service with base URL from config
@@ -184,7 +153,7 @@ export class VCSDKCoreHeadless {
         this.ensureInitialized();
 
         try {
-          console.log('[VCSDKHeadless] Starting credential download');
+          console.log('[VCSDKHeadless] credentials.download called', { issuerId: issuer?.id, credentialTypeId: credentialType?.id });
           this.events.emitCredentialDownloadStarted(credentialType, issuer);
 
           const credential = await this.services!.credential.requestAndDownload(
@@ -198,13 +167,14 @@ export class VCSDKCoreHeadless {
 
           this.events.emitCredentialDownloadComplete(credential, credentialType, issuer);
           this.events.emitCredentialListUpdated(await this.services!.credential.getAll());
-
+          console.log('[VCSDKHeadless] credentials.download complete, id:', credential?.id);
           return credential;
         } catch (error: any) {
           console.error('[VCSDKHeadless] Download error:', error);
 
           // Check for 424 error
           if (error.message === 'CREDENTIAL_NOT_AVAILABLE_424' || error.statusCode === 424) {
+            console.warn('[VCSDKHeadless] 424 - credential not available, emitting notAvailable424');
             this.events.emitCredentialNotAvailable424(
               credentialType,
               issuer,
@@ -220,7 +190,7 @@ export class VCSDKCoreHeadless {
             error.message?.includes('expired') ||
             error.message?.includes('No access token')
           ) {
-            // Emit auth required event - host app should handle authentication
+            console.warn('[VCSDKHeadless] Auth error detected, emitting auth:required', error.message);
             this.events.emitAuthRequired('', 'download', issuer);
             return null;
           }
@@ -235,7 +205,9 @@ export class VCSDKCoreHeadless {
        */
       getAll: async (): Promise<VC[]> => {
         this.ensureInitialized();
-        return await this.services!.credential.getAll();
+        const all = await this.services!.credential.getAll();
+        console.log('[VCSDKHeadless] credentials.getAll ->', all.length, 'credentials');
+        return all;
       },
 
       /**
@@ -247,11 +219,42 @@ export class VCSDKCoreHeadless {
       },
 
       /**
+       * Download a credential from a credential offer URL (QR / deep link)
+       * Requires InjiVciClient native module.
+       * Host app must handle VCI events (onRequestAuthCode, onRequestProof, etc.)
+       * by calling the corresponding NativeModules.InjiVciClient.sendXxxFromJS methods.
+       * Emits: credential:downloadStarted, credential:downloadComplete, credential:downloadError
+       */
+      downloadFromOffer: async (
+        credentialOfferUrl: string,
+        clientId: string,
+        redirectUri: string,
+      ): Promise<VC | null> => {
+        this.ensureInitialized();
+        try {
+          this.events.emitCredentialDownloadStarted({ id: 'offer', name: credentialOfferUrl }, null);
+          const credential = await this.services!.credential.downloadFromOffer(
+            credentialOfferUrl,
+            clientId,
+            redirectUri,
+            (progress: string) => this.events.emitCredentialDownloadProgress(0, 100, 50, progress),
+          );
+          this.events.emitCredentialDownloadComplete(credential, null, null);
+          this.events.emitCredentialListUpdated(await this.services!.credential.getAll());
+          return credential;
+        } catch (error: any) {
+          this.events.emitCredentialDownloadError(error, null, null, error.statusCode);
+          throw error;
+        }
+      },
+
+      /**
        * Delete a credential
        * Emits: credential:deleted, credential:listUpdated
        */
       delete: async (credentialId: string): Promise<boolean> => {
         this.ensureInitialized();
+        console.log('[VCSDKHeadless] credentials.delete', credentialId);
 
         try {
           const success = await this.services!.credential.deleteCredential(credentialId);
@@ -284,6 +287,7 @@ export class VCSDKCoreHeadless {
 
         try {
           const issuers = this.services!.issuer.getAllTrustedIssuers();
+          console.log('[VCSDKHeadless] issuers.getAll ->', issuers.length, 'issuers');
           this.events.emitIssuerListUpdated(issuers);
           return issuers;
         } catch (error) {
@@ -299,10 +303,12 @@ export class VCSDKCoreHeadless {
        */
       getCredentialTypes: async (issuerId: string): Promise<any[]> => {
         this.ensureInitialized();
+        console.log('[VCSDKHeadless] issuers.getCredentialTypes', issuerId);
 
         try {
           const credTypes = await this.services!.issuer.getCredentialTypes(issuerId);
           const issuer = await this.services!.issuer.getIssuerById(issuerId);
+          console.log('[VCSDKHeadless] issuers.getCredentialTypes ->', credTypes.length, 'types for', issuerId);
           this.events.emitIssuerCredentialTypesLoaded(issuer, credTypes);
           return credTypes;
         } catch (error) {
@@ -394,7 +400,7 @@ export class VCSDKCoreHeadless {
         this.ensureInitialized();
 
         try {
-          console.log('[VCSDKHeadless] Parsing share request');
+          console.log('[VCSDKHeadless] share.parseRequest url:', shareUrl);
 
           const authRequest = await this.services!.shareVC.parseAuthorizationRequest(shareUrl);
           const verifierInfo = this.services!.shareVC.getVerifierInfo(authRequest);
@@ -447,6 +453,7 @@ export class VCSDKCoreHeadless {
             authRequest,
           };
 
+          console.log('[VCSDKHeadless] share.parseRequest complete, matched credentials:', matchedCredentials.length);
           this.events.emitShareRequestParsed(verifierInfo, matchedCredentials, authRequest);
 
           return result;
@@ -470,11 +477,12 @@ export class VCSDKCoreHeadless {
         this.ensureInitialized();
 
         try {
-          console.log('[VCSDKHeadless] Downloading credentials for share');
+          console.log('[VCSDKHeadless] share.downloadCredentials start, count:', requestedCredentials.length);
           this.events.emitShareDownloadStarted(requestedCredentials.length);
 
           // Delete all existing credentials first
           const existingCreds = await this.services!.credential.getAll();
+          console.log('[VCSDKHeadless] Deleting', existingCreds.length, 'existing credentials before share download');
           for (const cred of existingCreds) {
             await this.services!.credential.deleteCredential(cred.id);
           }
@@ -494,11 +502,14 @@ export class VCSDKCoreHeadless {
               const matchingCredType = credTypes.find((ct: any) => ct.id === credType.credentialTypeId);
 
               if (!matchingCredType) {
+                console.error('[VCSDKHeadless] Credential type not found:', credType.credentialTypeId, 'in issuer', issuer.id);
                 throw new Error(`Credential type not found: ${credType.credentialTypeId}`);
               }
 
+              console.log('[VCSDKHeadless] Downloading credential', i + 1, '/', requestedCredentials.length, '-', credType.name);
               await this.services!.credential.requestAndDownload(issuer, matchingCredType);
               successCount++;
+              console.log('[VCSDKHeadless] Download success for', credType.name);
             } catch (error: any) {
               console.error('[VCSDKHeadless] Download error:', error);
 
@@ -530,6 +541,7 @@ export class VCSDKCoreHeadless {
           }
 
           const result = { successCount, error424Count, realErrorCount };
+          console.log('[VCSDKHeadless] share.downloadCredentials complete:', result);
           this.events.emitShareDownloadComplete(successCount, error424Count, realErrorCount);
 
           return result;
@@ -544,18 +556,23 @@ export class VCSDKCoreHeadless {
        * Complete the share flow after user grants consent
        * Emits: share:sharingStarted, share:sharingProgress, share:sharingComplete, share:error
        */
-      completeShare: async (authRequest: any, requestedCredentials: any[]): Promise<{
+      completeShare: async (
+        authRequest: any,
+        requestedCredentials: any[],
+        selectedDisclosuresByVcId?: Record<string, string[]>,
+      ): Promise<{
         success: boolean;
         protocolNumber?: string;
       }> => {
         this.ensureInitialized();
 
         try {
-          console.log('[VCSDKHeadless] Completing share');
+          console.log('[VCSDKHeadless] share.completeShare start');
           this.events.emitShareSharingStarted();
 
           // Get all downloaded credentials
           const allCredentials = await this.services!.credential.getAll();
+          console.log('[VCSDKHeadless] Available credentials for share:', allCredentials.length);
 
           // Filter credentials that match requested types
           const credentialsToShare = requestedCredentials
@@ -579,8 +596,10 @@ export class VCSDKCoreHeadless {
             .filter(Boolean) as VC[];
 
           if (credentialsToShare.length === 0) {
+            console.error('[VCSDKHeadless] No credentials matched for sharing. Requested:', requestedCredentials.map(r => r.type), '| Available types:', allCredentials.map(c => c.type));
             throw new Error('No credentials available to share');
           }
+          console.log('[VCSDKHeadless] Credentials matched for share:', credentialsToShare.length);
 
           this.events.emitShareSharingProgress('Matching credentials...');
 
@@ -593,7 +612,11 @@ export class VCSDKCoreHeadless {
           this.events.emitShareSharingProgress('Creating verifiable presentation...');
 
           // Construct verifiable presentation
-          const vp = await this.services!.shareVC.constructVerifiablePresentation(matchedCreds, authRequest);
+          const vp = await this.services!.shareVC.constructVerifiablePresentation(
+            matchedCreds,
+            authRequest,
+            selectedDisclosuresByVcId,
+          );
 
           this.events.emitShareSharingProgress('Sending to verifier...');
 
@@ -602,9 +625,11 @@ export class VCSDKCoreHeadless {
 
           if (result.success) {
             const protocolNumber = result.transactionId || result.id || authRequest.state || '';
+            console.log('[VCSDKHeadless] share.completeShare success, protocolNumber:', protocolNumber);
             this.events.emitShareSharingComplete(true, protocolNumber, result.transactionId);
             return { success: true, protocolNumber };
           } else {
+            console.error('[VCSDKHeadless] share.completeShare failed:', result.error);
             throw new Error(result.error || 'Share failed');
           }
         } catch (error) {
@@ -641,7 +666,7 @@ export class VCSDKCoreHeadless {
           console.log('[VCSDKHeadless] Registering device');
           this.events.emitDeviceRegistrationStarted();
 
-          await notificationService.registerDevice(cpf, fcmToken);
+          await notificationService.registerDeviceMapping(cpf, fcmToken);
 
           this.events.emitDeviceRegistrationComplete('device-id', cpf);
           this.events.emitDeviceFcmTokenUpdated(fcmToken);

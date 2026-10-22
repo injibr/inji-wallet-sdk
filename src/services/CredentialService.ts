@@ -137,6 +137,7 @@ export class CredentialService {
       return {
         format: 'mso_mdoc',
         doctype: credentialType.doctype ?? credentialType.fullConfig?.doctype ?? credentialType.id,
+        claims: credentialType.claims ?? credentialType.credentialSubject ?? {},
         proof,
       };
     }
@@ -145,6 +146,7 @@ export class CredentialService {
       return {
         format,
         vct: credentialType.vct ?? credentialType.fullConfig?.vct ?? credentialType.id,
+        claims: credentialType.claims ?? credentialType.credentialSubject ?? {},
         proof,
       };
     }
@@ -159,7 +161,11 @@ export class CredentialService {
 
     return {
       format: 'ldp_vc',
-      credential_definition: { type: types, '@context': context },
+      credential_definition: {
+        type: types,
+        '@context': context,
+        credentialSubject: credentialType.credentialSubject ?? {},
+      },
       proof,
       doctype: credentialType.id,
       issuerId: credentialType.issuerId,

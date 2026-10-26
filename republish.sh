@@ -2,7 +2,7 @@
 set -e
 
 PACKAGE="@br.gov.dataprev.inji/wallet-sdk"
-VERSION="1.0.4"
+VERSION="1.0.8"
 SOURCE_REGISTRY="https://www-bin.prevnet/repository/npm-public/"
 TARGET_REGISTRY="https://registry.npmjs.org/"
 NPM_USER="${NPM_USER:-dataprev-inji}"

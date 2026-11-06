@@ -582,15 +582,39 @@ export class ShareVCService {
   // ---------------------------------------------------------------------------
 
   private async ensureKeyPair(): Promise<void> {
-    if (!this.privateKey) {
-      this.privateKey = ed.utils.randomPrivateKey();
-      this.publicKey = await ed.getPublicKeyAsync(this.privateKey);
-    }
+    if (this.privateKey) return;
+
+    const CACHE_KEY = 'Ed25519_Issuer_KeyPair';
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const raw = await AsyncStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const { privateKeyHex, publicKeyHex } = JSON.parse(raw);
+        this.privateKey = Buffer.from(privateKeyHex, 'hex');
+        this.publicKey = Buffer.from(publicKeyHex, 'hex');
+        return;
+      }
+    } catch (_) {}
+
+    // Fallback: gera novo par e persiste (primeira vez)
+    this.privateKey = ed.utils.randomPrivateKey();
+    this.publicKey = await ed.getPublicKeyAsync(this.privateKey);
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const pubJwk = buildEdDsaJwk(this.publicKey!);
+      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({
+        privateKeyHex: Buffer.from(this.privateKey).toString('hex'),
+        publicKeyHex: Buffer.from(this.publicKey).toString('hex'),
+        pubJwk,
+      }));
+    } catch (_) {}
   }
 
   private buildHolderDID(): string {
     const jwk = buildEdDsaJwk(this.publicKey!);
-    return `did:jwk:${base64url(JSON.stringify(jwk))}#0`;
+    // Certify grava o DID sem #0 e com padding base64 (Base64.getUrlEncoder padrao do Java)
+    const b64 = Buffer.from(JSON.stringify(jwk)).toString('base64');
+    return `did:jwk:${b64}`;
   }
 
   private generateUUID(): string {

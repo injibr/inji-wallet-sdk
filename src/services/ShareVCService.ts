@@ -326,7 +326,7 @@ export class ShareVCService {
       created,
       challenge: authRequest.nonce,
       domain: authRequest.domain ?? authRequest.client_id,
-      verificationMethod: holderDID,
+      verificationMethod: `${holderDID}#0`,
       proofPurpose: 'authentication',
     };
 
@@ -357,7 +357,7 @@ export class ShareVCService {
         proof: {
           type: 'Ed25519Signature2020',
           created,
-          verificationMethod: holderDID,
+          verificationMethod: `${holderDID}#0`,
           domain: authRequest.domain ?? authRequest.client_id,
           challenge: authRequest.nonce,
           proofPurpose: 'authentication',
@@ -612,9 +612,9 @@ export class ShareVCService {
 
   private buildHolderDID(): string {
     const jwk = buildEdDsaJwk(this.publicKey!);
-    // Certify grava o DID sem #0 e com padding base64 (Base64.getUrlEncoder padrao do Java)
-    const b64 = Buffer.from(JSON.stringify(jwk)).toString('base64');
-    return `did:jwk:${b64}`;
+    // The VC may contain a padded DID, but the VP resolver requires unpadded base64url.
+    // Both encodings represent the same public JWK.
+    return `did:jwk:${base64url(JSON.stringify(jwk))}`;
   }
 
   private generateUUID(): string {

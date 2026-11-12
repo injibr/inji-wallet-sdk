@@ -326,7 +326,7 @@ export class ShareVCService {
       created,
       challenge: authRequest.nonce,
       domain: authRequest.domain ?? authRequest.client_id,
-      verificationMethod: holderDID,
+      verificationMethod: `${holderDID}#0`,
       proofPurpose: 'authentication',
     };
 
@@ -357,7 +357,7 @@ export class ShareVCService {
         proof: {
           type: 'Ed25519Signature2020',
           created,
-          verificationMethod: holderDID,
+          verificationMethod: `${holderDID}#0`,
           domain: authRequest.domain ?? authRequest.client_id,
           challenge: authRequest.nonce,
           proofPurpose: 'authentication',
@@ -582,15 +582,39 @@ export class ShareVCService {
   // ---------------------------------------------------------------------------
 
   private async ensureKeyPair(): Promise<void> {
-    if (!this.privateKey) {
-      this.privateKey = ed.utils.randomPrivateKey();
-      this.publicKey = await ed.getPublicKeyAsync(this.privateKey);
-    }
+    if (this.privateKey) return;
+
+    const CACHE_KEY = 'Ed25519_Issuer_KeyPair';
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const raw = await AsyncStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const { privateKeyHex, publicKeyHex } = JSON.parse(raw);
+        this.privateKey = Buffer.from(privateKeyHex, 'hex');
+        this.publicKey = Buffer.from(publicKeyHex, 'hex');
+        return;
+      }
+    } catch (_) {}
+
+    // Fallback: gera novo par e persiste (primeira vez)
+    this.privateKey = ed.utils.randomPrivateKey();
+    this.publicKey = await ed.getPublicKeyAsync(this.privateKey);
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const pubJwk = buildEdDsaJwk(this.publicKey!);
+      await AsyncStorage.setItem(CACHE_KEY, JSON.stringify({
+        privateKeyHex: Buffer.from(this.privateKey).toString('hex'),
+        publicKeyHex: Buffer.from(this.publicKey).toString('hex'),
+        pubJwk,
+      }));
+    } catch (_) {}
   }
 
   private buildHolderDID(): string {
     const jwk = buildEdDsaJwk(this.publicKey!);
-    return `did:jwk:${base64url(JSON.stringify(jwk))}#0`;
+    // The VC may contain a padded DID, but the VP resolver requires unpadded base64url.
+    // Both encodings represent the same public JWK.
+    return `did:jwk:${base64url(JSON.stringify(jwk))}`;
   }
 
   private generateUUID(): string {

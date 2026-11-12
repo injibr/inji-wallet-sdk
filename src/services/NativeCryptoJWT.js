@@ -8,28 +8,17 @@
 export class NativeCryptoJWT {
 
   constructor() {
-    this.ISSUERS_KEY_REF = 'OpenId4VCI_KeyPair';
+    this.ISSUERS_KEY_REF = 'OpenId4VCI_Ed25519_KeyPair';
     this.keyCache = new Map(); // Cache keys in memory to avoid repeated generation
   }
 
-  // Base64URL encoding helper (fixed for Node.js compatibility)
-  base64UrlEncode(str) {
-    // Support both Node.js Buffer and browser/React Native
-    let base64;
-    if (typeof Buffer !== 'undefined') {
-      // Node.js environment
-      base64 = Buffer.from(str).toString('base64');
-    } else {
-      // React Native/Browser environment
-      try {
-        const { Buffer: NodeBuffer } = require('buffer');
-        base64 = NodeBuffer.from(str).toString('base64');
-      } catch (e) {
-        // Ultimate fallback using btoa (browser)
-        base64 = btoa(str);
-      }
-    }
-    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  // Base64URL encoding helper — aceita string (UTF-8) ou Uint8Array/Buffer
+  base64UrlEncode(input) {
+    const { Buffer } = require('buffer');
+    const buf = input instanceof Uint8Array || Buffer.isBuffer(input)
+      ? Buffer.from(input)
+      : Buffer.from(input, 'utf8');
+    return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
   }
 
   // Create JWT with INJI's native keystore (real crypto signatures)
@@ -347,15 +336,86 @@ export class NativeCryptoJWT {
     return Math.abs(hash);
   }
 
+  async createEd25519JWT(payload) {
+    const { Buffer } = require('buffer');
+   
+    // Importação da biblioteca ed25519
+    let ed;
+    try {
+      ed = require('@noble/curves/ed25519').ed25519;
+    } catch {
+      ed = require('@noble/curves/ed25519').ed25519;
+    }
+
+
+    const CACHE_KEY = 'Ed25519_Issuer_KeyPair';
+    let privateKeyBytes;
+    let publicKeyBytes;
+    let pubJwk;
+
+
+    const stored = await this._loadStoredKey(CACHE_KEY);
+    if (stored) {
+      privateKeyBytes = Buffer.from(stored.privateKeyHex, 'hex');
+      publicKeyBytes = Buffer.from(stored.publicKeyHex, 'hex');
+      pubJwk = stored.pubJwk;
+      console.log('[NATIVE_CRYPTO_JWT] Reusing stored Ed25519 key pair');
+    } else {
+      console.log('[NATIVE_CRYPTO_JWT] Generating new Ed25519 key pair...');
+      privateKeyBytes = (ed.utils.randomPrivateKey || ed.utils.randomSecretKey)();
+      publicKeyBytes = ed.getPublicKey(privateKeyBytes);
+
+
+      // Formato JWK OKP exigido para Ed25519
+      pubJwk = {
+        kty: 'OKP',
+        crv: 'Ed25519',
+        x: this.base64UrlEncode(publicKeyBytes),
+      };
+
+
+      await this._storeKey(CACHE_KEY, {
+        privateKeyHex: Buffer.from(privateKeyBytes).toString('hex'),
+        publicKeyHex: Buffer.from(publicKeyBytes).toString('hex'),
+        pubJwk,
+      });
+    }
+
+
+    const didJwk = `did:jwk:${Buffer.from(JSON.stringify(pubJwk)).toString('base64')}`;
+    const finalPayload = { ...payload, sub: didJwk };
+
+
+    const header = {
+      typ: 'openid4vci-proof+jwt',
+      alg: 'EdDSA',
+      jwk: pubJwk,
+    };
+
+
+    const headerB64 = this.base64UrlEncode(JSON.stringify(header));
+    const payloadB64 = this.base64UrlEncode(JSON.stringify(finalPayload));
+    const signingInput = `${headerB64}.${payloadB64}`;
+
+
+    const signatureBytes = ed.sign(Buffer.from(signingInput, 'utf8'), privateKeyBytes);
+    const sigB64 = this.base64UrlEncode(signatureBytes);
+
+
+    console.log('[NATIVE_CRYPTO_JWT] ✅ Ed25519 issuance proof JWT created, sub:', didJwk.substring(0, 40) + '...');
+    return `${signingInput}.${sigB64}`;
+  }
+
+
   // Main method to create JWT with native keystore detection
   async createJWT(payload, options = {}) {
-    console.log('[NATIVE_CRYPTO_JWT] Creating JWT (ES256/P-256)...');
+    console.log('[NATIVE_CRYPTO_JWT] Creating Ed25519 JWT for issuance proof...');
     try {
-      const jwt = await this.createNodeForgeJWT(payload);
-      console.log('[NATIVE_CRYPTO_JWT] ✅ JWT created, length:', jwt.length);
+      const jwt = await this.createEd25519JWT(payload);
+      console.log('[NATIVE_CRYPTO_JWT] ✅ Ed25519 JWT created, length:', jwt.length);
       return jwt;
     } catch (error) {
-      console.error('[NATIVE_CRYPTO_JWT] ❌ JWT creation failed:', error.message);
+      console.error('[NATIVE_CRYPTO_JWT] ❌ Ed25519 JWT creation failed:', error.message);
       throw error;
     }
   }
@@ -469,79 +529,36 @@ export class NativeCryptoJWT {
     }
   }
 
-  // EC P-256 / ES256 JWT implementation using elliptic
   async createNodeForgeJWT(payload) {
-    console.log('[NATIVE_CRYPTO_JWT] Creating ES256/P-256 JWT with elliptic...');
-    const { Buffer } = require('buffer');
-    const EC = require('elliptic').ec;
-    const ec = new EC('p256');
-    const CACHE_KEY = 'EC_P256_KeyPair';
-    let keyPair, pubJwk;
-    const stored = await this._loadStoredKey(CACHE_KEY);
-    if (stored) {
-      keyPair = ec.keyFromPrivate(stored.privateKeyHex, 'hex');
-      pubJwk = stored.pubJwk;
-      console.log('[NATIVE_CRYPTO_JWT] Reusing stored EC P-256 key');
-    } else {
-      console.log('[NATIVE_CRYPTO_JWT] Generating EC P-256 key pair...');
-      let forge;
-      try { const m = await import('node-forge'); forge = m.default || m; }
-      catch { forge = require('node-forge'); }
-      const randomBytes = forge.random.getBytesSync(32);
-      const privHex = Buffer.from(randomBytes, 'binary').toString('hex');
-      keyPair = ec.keyFromPrivate(privHex, 'hex');
-      const pub = keyPair.getPublic();
-      const xHex = pub.getX().toString('hex').padStart(64, '0');
-      const yHex = pub.getY().toString('hex').padStart(64, '0');
-      pubJwk = {
-        kty: 'EC',
-        crv: 'P-256',
-        x: Buffer.from(xHex, 'hex').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,''),
-        y: Buffer.from(yHex, 'hex').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,''),
-      };
-      await this._storeKey(CACHE_KEY, { privateKeyHex: privHex, pubJwk });
-    }
-    const didJwk = `did:jwk:${Buffer.from(JSON.stringify(pubJwk)).toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'')}`;
-    const finalPayload = { ...payload, sub: didJwk };
-    const header = { typ: 'openid4vci-proof+jwt', alg: 'ES256', jwk: pubJwk };
-    const headerB64 = this.base64UrlEncode(JSON.stringify(header));
-    const payloadB64 = this.base64UrlEncode(JSON.stringify(finalPayload));
-    const signingInput = `${headerB64}.${payloadB64}`;
-    let forge2;
-    try { const m = await import('node-forge'); forge2 = m.default || m; }
-    catch { forge2 = require('node-forge'); }
-    const md = forge2.md.sha256.create();
-    md.update(signingInput, 'utf8');
-    const hashHex = md.digest().toHex();
-    const sig = keyPair.sign(hashHex);
-    const rHex = sig.r.toString('hex').padStart(64, '0');
-    const sHex = sig.s.toString('hex').padStart(64, '0');
-    const sigB64 = Buffer.from(rHex + sHex, 'hex').toString('base64').replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
-    console.log('[NATIVE_CRYPTO_JWT] \u2705 ES256 JWT created, sub:', didJwk.substring(0, 40) + '...');
-    return `${signingInput}.${sigB64}`;
+    console.log('[NATIVE_CRYPTO_JWT] Delegating to Ed25519 implementation...');
+    return await this.createEd25519JWT(payload);
   }
 
   async _loadStoredKey(key) {
     try {
       let AsyncStorage;
-      try { AsyncStorage = require('@react-native-async-storage/async-storage').default; }
-      catch { AsyncStorage = require('@react-native-async-storage/async-storage'); }
+      try {
+        AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      } catch {
+        AsyncStorage = require('@react-native-async-storage/async-storage');
+      }
       const raw = await AsyncStorage.getItem(key);
       return raw ? JSON.parse(raw) : null;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }
 
   async _storeKey(key, data) {
     try {
       let AsyncStorage;
-      try { AsyncStorage = require('@react-native-async-storage/async-storage').default; }
-      catch { AsyncStorage = require('@react-native-async-storage/async-storage'); }
+      try {
+        AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      } catch {
+        AsyncStorage = require('@react-native-async-storage/async-storage');
+      }
       await AsyncStorage.setItem(key, JSON.stringify(data));
     } catch {}
-  }
-
-  async createFallbackJWT(payload) {
-    return await this.createNodeForgeJWT(payload);
   }
 }
 
